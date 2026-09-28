@@ -30,19 +30,22 @@ src/
   compaction/  deterministic, produces a *view*; never rewrites the session log
   tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate
     processes.ts   ProcessManager: every shell command tools start; bounded output; group kill
+    readonly.ts    conservative read-only shell detection (auto-approved: git status/log/diff, ls, rg...)
   agent/       loop.ts: model -> tools -> model; handoff note on provider switch (incl. running processes)
   pricing.ts   list prices + session cost estimate
   ui/
     commands.ts    slash commands shared by both UIs
     repl.ts        line-based prompt (--plain, pipes, narrow terminals)
     theme.ts       palette + glyphs; all UI color goes through here
-    tui/           full-screen Ink app
-      store.ts     UI state driven by agent events (no React)
-      format.ts    pure renderers: conversation, process pane, header, status, input
+    tui/           Ink apps
+      InlineApp.tsx  default: finished steps printed to scrollback (<Static>), live bottom area only
+      App.tsx        --fullscreen: alt screen, side process pane, mouse
+      store.ts     UI state driven by agent events (no React): queue, picker, approval, printed index
+      format.ts    pure renderers: transcript entries (shared), process pane, fullscreen chrome
+      panels.ts    inline widgets: permission prompt, model picker, process box, input box, footer
       editor.ts    readline-style prompt editing (pure)
       mouse.ts     SGR mouse parsing; strips reports from stdin before Ink sees them
-      App.tsx      layout, keyboard and mouse handling
-      run.tsx      alt screen, mouse on/off, cleanup
+      run.tsx      picks the layout; mouse on/off and cleanup for fullscreen
   config/      baton.config.json > ~/.baton/config.json > env-derived chain; DEFAULT_MODELS
   doctor.ts    `baton doctor`: real two-step tool loop per chain entry, plain-language diagnosis
 ```
@@ -61,6 +64,7 @@ src/
 10. **Renderers return exact-width lines.** `format.ts` functions pad/truncate to the column; mouse hit-testing relies on the layout they report (`procCols`, `rowIds`, `closeCols`).
 11. **Subscriptions only through the official, unmodified CLIs.** baton never reads, stores or proxies Claude/ChatGPT login tokens (Anthropic's terms forbid it for Claude). Status checks ask the CLI (`claude auth status`, `codex login status`); never open their credential files.
 12. **External agents execute tools only through the bridge.** Claude Code runs with `--tools ""`; Codex runs read-only with baton's MCP server pre-approved. That keeps approvals, the process pane and the IR log authoritative.
+13. **Permission prompts answer only to numbers, arrows+enter and esc.** Never letters: text typed mid-sentence as a prompt appears must not approve anything. Read-only detection (readonly.ts) must stay conservative; when unsure, ask.
 
 ## Design decisions
 

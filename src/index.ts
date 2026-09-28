@@ -28,8 +28,9 @@ Options:
   -m, --model <name>         start on this chain entry (label, model id, or index)
   -a, --approval <mode>      ask | auto-edit | yolo   (default: ask)
   -y, --yes                  shorthand for --approval yolo
-      --plain                line-based prompt instead of the full-screen UI
-      --no-mouse             don't capture the mouse (keeps native text selection)
+      --plain                simple line-based prompt
+      --fullscreen           full-screen layout with a side process pane and mouse support
+      --no-mouse             with --fullscreen: don't capture the mouse
   -v, --version              print the version
   -h, --help                 show this help
 
@@ -47,6 +48,7 @@ async function main(): Promise<number> {
       approval: { type: 'string', short: 'a' },
       yes: { type: 'boolean', short: 'y' },
       plain: { type: 'boolean' },
+      fullscreen: { type: 'boolean' },
       'no-mouse': { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
@@ -133,7 +135,7 @@ async function main(): Promise<number> {
     const { runTui } = await import('./ui/tui/run.js');
     const store = new TuiStore(session.cwd, approval);
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: store.approve });
-    await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval });
+    await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline' });
     await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);
     return 0;

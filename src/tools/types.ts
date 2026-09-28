@@ -1,4 +1,4 @@
-import type { ToolSpec } from '../ir/types.js';
+import type { ToolCallBlock, ToolSpec } from '../ir/types.js';
 import type { ProcessManager } from './processes.js';
 
 export interface ToolContext {
@@ -8,7 +8,7 @@ export interface ToolContext {
    * Ask the user before a side-effecting action. Resolves false to deny.
    * The tool engine calls this; tools never prompt directly.
    */
-  approve: (summary: string) => Promise<boolean>;
+  approve: (summary: string, call?: ToolCallBlock) => Promise<boolean>;
   /** Shell commands the tools start; shown in the TUI process pane. */
   processes: ProcessManager;
 }

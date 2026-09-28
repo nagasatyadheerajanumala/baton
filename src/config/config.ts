@@ -17,6 +17,8 @@ export interface ProviderConfig {
   type: 'anthropic' | 'openai' | 'openai-compatible' | 'claude-code' | 'codex';
   /** claude-code / codex: path to the CLI binary (default: found on PATH). */
   command?: string;
+  /** Display name in the UI, e.g. "Work API key". Defaults to the account type ("Claude plan"). */
+  label?: string;
   apiKey?: string;
   /** Name of the env var holding the key (preferred over inline apiKey). */
   apiKeyEnv?: string;

@@ -38,6 +38,7 @@ export interface OpenAIResponsesAdapterOptions {
  */
 export class OpenAIResponsesAdapter implements ProviderAdapter {
   readonly name: string;
+  readonly label = 'OpenAI API';
   private readonly client: OpenAI;
   private readonly effort: OpenAIResponsesAdapterOptions['reasoningEffort'];
 

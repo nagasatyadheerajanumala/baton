@@ -132,8 +132,9 @@ export function App({ agent, store, version, cwdLabel, onMouse, onExit }: AppPro
 
   useInput((input, key) => {
     if (store.approval) {
-      const a = input.toLowerCase();
-      if (a === 'y' || a === 'n' || a === 'a') store.answerApproval(a);
+      // Numbers only: letters typed mid-sentence must never approve anything.
+      const pick = ({ '1': 'y', '2': 'a', '3': 'n' } as const)[input as '1' | '2' | '3'];
+      if (pick) store.answerApproval(pick);
       else if (key.escape || (key.ctrl && input === 'c')) {
         store.answerApproval('n');
         controller.current?.abort();

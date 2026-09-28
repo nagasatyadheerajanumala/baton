@@ -3,8 +3,10 @@ import wrapAnsi from 'wrap-ansi';
 import { type ManagedProcess, type ProcessManager, formatDuration, statusLabel } from '../../tools/processes.js';
 import { glyph, t } from '../theme.js';
 import type { Entry } from './store.js';
+import { cleanOutput } from './clean.js';
 
-const VERB_WIDTH = 7;
+export { cleanOutput };
+
 const MAX_DIFF_LINES = 8;
 
 export const width = (s: string) => stringWidth(s);
@@ -33,17 +35,6 @@ export function wrap(s: string, w: number): string[] {
   return wrapAnsi(s, Math.max(1, w), { hard: true, trim: false }).split('\n');
 }
 
-/** Strip escape codes and resolve carriage-return redraws (progress bars) in process output. */
-export function cleanOutput(s: string): string {
-  return s
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
-    .split('\n')
-    .map((line) => line.split('\r').filter(Boolean).pop() ?? '')
-    .join('\n')
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-}
-
 // ---- Conversation ------------------------------------------------------------------
 
 export interface ConversationContext {
@@ -51,82 +42,109 @@ export interface ConversationContext {
   now: number;
   spinner: string;
   processes: ProcessManager;
+  /** Tool call currently waiting for the user's approval. */
+  waitingCallId?: string;
 }
+
+const TOOL_NAMES: Record<string, string> = {
+  read: 'Read', write: 'Write', edit: 'Edit', list: 'List', search: 'Search', bash: 'Shell',
+  output: 'Output', stop: 'Stop', procs: 'Processes', git: 'Git',
+};
 
 export function welcomeLines(w: number, version: string): string[] {
   return [
     '',
     `  ${t.bold('baton')} ${t.muted(`v${version}`)}`,
-    ...wrap(t.muted('  Ask for a change, a fix, or an explanation. If a model runs out of quota, baton hands the session to the next one.'), w),
+    ...gutter('  ', '  ', t.muted('Ask for a change, a fix, or an explanation. If a model hits its limit, baton hands the session to the next one and keeps going.'), w),
     '',
-    `  ${t.muted('/help')} ${t.muted('commands')}  ${t.muted(glyph.sep)}  ${t.muted('^P')} ${t.muted('processes')}  ${t.muted(glyph.sep)}  ${t.muted('^C')} ${t.muted('interrupt')}  ${t.muted(glyph.sep)}  ${t.muted('^D')} ${t.muted('exit')}`,
+    t.muted(`  / commands  ${glyph.sep}  shift+tab permission mode  ${glyph.sep}  ^O full output  ${glyph.sep}  ^P processes  ${glyph.sep}  esc interrupt`),
+    '',
   ];
+}
+
+/** Indent continuation lines under a gutter so wrapped text lines up. */
+function gutter(first: string, rest: string, text: string, w: number): string[] {
+  const lines = wrap(text, Math.max(10, w - width(first)));
+  return lines.map((l, i) => (i === 0 ? first : rest) + l);
 }
 
 export function renderEntry(e: Entry, ctx: ConversationContext): string[] {
   const w = ctx.width;
   switch (e.kind) {
     case 'user':
-      return ['', ...wrap(`${t.accent(glyph.prompt)} ${t.bold(e.text)}`, w), ''];
+      return [...gutter(`${t.accent(glyph.prompt)} `, '  ', t.bold(e.text), w), ''];
     case 'assistant': {
-      const body = wrap(e.text, w - 2).map((l) => `  ${l}`);
-      return e.interrupted ? [...body, `  ${t.muted('(cut off by provider switch)')}`] : [...body, ''];
+      const body = e.text.split('\n').flatMap((para, i) => gutter(i === 0 ? `${t.text(glyph.active)} ` : '  ', '  ', para, w));
+      return e.interrupted ? [...body, `  ${t.muted('(cut off: the provider switched mid-answer)')}`, ''] : [...body, ''];
     }
     case 'tool':
       return renderTool(e, ctx);
-    case 'switch': {
-      const label = ` switched to ${e.to} ${glyph.sep} ${e.reason} `;
-      const side = Math.max(2, Math.floor((w - width(label)) / 2));
-      return [t.warning(truncate(glyph.switch.repeat(side) + label + glyph.switch.repeat(Math.max(2, w - side - width(label))), w))];
-    }
+    case 'switch':
+      return [
+        t.warning(t.bold(`↪ Switched to ${e.toLabel}`)) + t.warning(` (${e.toModel})`),
+        ...gutter('  ', '  ', t.muted(`${e.fromLabel} ${e.reason}. The conversation and your files carried over.`), w),
+        '',
+      ];
     case 'retry':
-      return [`  ${t.warning(glyph.wait)} ${t.muted(`${e.target} ${e.reason.replace('_', ' ')} ${glyph.sep} retrying in ${e.seconds}s`)}`];
+      return [`  ${t.warning(glyph.wait)} ${t.muted(`${e.label} ${e.reason}, retrying in ${e.seconds}s`)}`];
     case 'compact':
-      return [`  ${t.muted(`${glyph.sep} compacted history for ${e.target} (${e.applied.join(', ')}) ≈${e.tokens.toLocaleString()} tokens`)}`];
+      return [`  ${t.muted(`${glyph.sep} trimmed older history to fit ${e.target} (≈${e.tokens.toLocaleString()} tokens)`)}`];
     case 'notice': {
       const color = e.level === 'error' ? t.danger : e.level === 'warn' ? t.warning : t.muted;
-      return ['', ...wrap(e.text, w - 2).map((l) => `  ${color(l)}`), ''];
+      return ['', ...gutter('  ', '  ', color(e.text), w), ''];
     }
     case 'output':
-      return [...e.text.split('\n').flatMap((l) => wrap(l, w - 2)).map((l) => `  ${l}`), ''];
+      return [...e.text.split('\n').flatMap((l) => gutter('  ', '  ', l, w)), ''];
     case 'command':
-      return ['', t.muted(`${glyph.prompt} ${e.text}`), ''];
+      return ['', t.muted(`${glyph.prompt} ${e.text}`)];
   }
 }
 
 function renderTool(e: Extract<Entry, { kind: 'tool' }>, ctx: ConversationContext): string[] {
   const w = ctx.width;
   const proc = e.procId !== undefined ? ctx.processes.get(e.procId) : undefined;
+  const waiting = ctx.waitingCallId === e.callId && e.status === 'running';
   let mark: string;
   let summary = e.summary ?? '';
-  if (proc) {
+  if (waiting) {
+    mark = t.warning('?');
+    summary = 'waiting for your approval';
+  } else if (proc) {
     mark = proc.running ? t.accent(glyph.active) : proc.info.exitCode === 0 ? t.success(glyph.ok) : t.muted(glyph.idle);
-    summary = proc.running ? `background #${proc.info.id}` : `#${proc.info.id} ${statusLabel(proc.info)}`;
+    summary = proc.running ? `running in background #${proc.info.id} (^P)` : `#${proc.info.id} ${statusLabel(proc.info)}`;
   } else if (e.status === 'running') mark = t.accent(ctx.spinner);
-  else mark = e.status === 'ok' ? t.success(glyph.ok) : t.danger(glyph.fail);
+  else mark = e.status === 'ok' ? t.success(glyph.active) : t.danger(glyph.active);
 
-  const counts = e.added !== undefined ? `${t.success(`+${e.added}`)} ${t.danger(`-${e.removed ?? 0}`)}` : '';
-  const right = [counts, summary ? t.muted(summary) : ''].filter(Boolean).join('  ');
-  const head = `  ${mark} ${t.muted(e.verb.padEnd(VERB_WIDTH))} ${e.detail}`;
-  const lines = [right ? justify(head, right, w) : truncate(head, w)];
+  const name = TOOL_NAMES[e.verb] ?? e.verb;
+  const counts = e.added !== undefined ? ` ${t.success(`+${e.added}`)} ${t.danger(`-${e.removed ?? 0}`)}` : '';
+  const tail = `${counts}${summary ? `  ${waiting ? t.warning(summary) : t.muted(summary)}` : ''}`;
+  const detail = e.detail.replace(/\s*\n\s*/g, ' ');
+  const room = Math.max(8, w - width(`x ${name}()`) - width(tail) - 1);
+  const head = `${mark} ${t.bold(name)}${detail ? t.muted('(') + truncate(detail, room) + t.muted(')') : ''}${tail}`;
+  const lines = [truncate(head, w)];
+  const bar = t.muted('  ⎿  ');
+  const pad = '     ';
 
   if (e.diff?.length) {
     const numWidth = Math.max(2, ...e.diff.map((d) => String(d.line ?? '').length));
-    const indent = ' '.repeat(4 + VERB_WIDTH - numWidth);
-    for (const d of e.diff.slice(0, MAX_DIFF_LINES)) {
+    e.diff.slice(0, MAX_DIFF_LINES).forEach((d, i) => {
       const color = d.sign === '+' ? t.success : t.danger;
-      lines.push(truncate(`${indent}${t.muted(`${String(d.line ?? '').padStart(numWidth)} │`)}${color(`${d.sign} ${d.text}`)}`, w));
-    }
-    if (e.diff.length > MAX_DIFF_LINES) lines.push(`${indent}${t.muted(`   … ${e.diff.length - MAX_DIFF_LINES} more lines`)}`);
+      lines.push(truncate(`${i === 0 ? bar : pad}${t.muted(String(d.line ?? '').padStart(numWidth))} ${color(`${d.sign} ${d.text}`)}`, w));
+    });
+    if (e.diff.length > MAX_DIFF_LINES) lines.push(`${pad}${t.muted(`… +${e.diff.length - MAX_DIFF_LINES} more changed lines`)}`);
+  } else if (e.preview?.length) {
+    e.preview.forEach((l, i) => lines.push(truncate(`${i === 0 ? bar : pad}${t.muted(l)}`, w)));
+    const more = (e.outputLines ?? 0) - e.preview.length;
+    if (more > 0) lines.push(`${pad}${t.muted(`… +${more} line${more === 1 ? '' : 's'} (ctrl+o to expand)`)}`);
   }
-  if (e.error) lines.push(...wrap(t.danger(e.error), w - 4 - VERB_WIDTH).map((l) => `${' '.repeat(4 + VERB_WIDTH)}${l}`));
+  if (e.error) lines.push(...gutter(e.diff?.length || e.preview?.length ? pad : bar, pad, t.danger(e.error), w));
   return lines;
 }
 
 export function renderConversation(entries: Entry[], live: string, ctx: ConversationContext, version: string): string[] {
   if (entries.length === 0 && !live) return welcomeLines(ctx.width, version);
   const lines = entries.flatMap((e) => renderEntry(e, ctx));
-  if (live) lines.push(...wrap(live, ctx.width - 2).map((l) => `  ${l}`));
+  if (live) lines.push(...live.split('\n').flatMap((para, i) => gutter(i === 0 ? `${glyph.active} ` : '  ', '  ', para, ctx.width)));
   while (lines.length && lines[0] === '') lines.shift();
   return lines;
 }
@@ -274,7 +292,7 @@ export function renderInput(
 ): string {
   const w = opts.width;
   if (opts.approval) {
-    return justify(` ${t.warning('Allow')}  ${t.bold(opts.approval)} ${t.muted('?')}`, `${t.bold('y')} ${t.muted('yes')}   ${t.bold('n')} ${t.muted('no')}   ${t.bold('a')} ${t.muted('always')} `, w);
+    return justify(` ${t.warning('Allow')}  ${t.bold(opts.approval)} ${t.muted('?')}`, `${t.bold('1')} ${t.muted('yes')}   ${t.bold('2')} ${t.muted('yes, always')}   ${t.bold('3')} ${t.muted('no')} `, w);
   }
   if (opts.busy) return justify(` ${t.accent(opts.spinner)} ${t.muted(`working ${glyph.sep} ${opts.elapsed}`)}`, `${t.muted('^C interrupt')} `, w);
   const prompt = ` ${t.accent(glyph.prompt)} `;

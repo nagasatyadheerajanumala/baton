@@ -13,6 +13,7 @@ export interface AnthropicAdapterOptions {
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly name: string;
+  readonly label = 'Claude API';
   private readonly client: Anthropic;
 
   constructor(opts: AnthropicAdapterOptions) {

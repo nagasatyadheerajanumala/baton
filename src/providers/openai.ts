@@ -26,6 +26,10 @@ export interface OpenAIChatAdapterOptions {
  */
 export class OpenAIChatAdapter implements ProviderAdapter {
   readonly name: string;
+  get label(): string {
+    const known: Record<string, string> = { openrouter: 'OpenRouter', ollama: 'Ollama (local)', litellm: 'LiteLLM', vllm: 'vLLM' };
+    return known[this.name.toLowerCase()] ?? this.name;
+  }
   private readonly client: OpenAI;
   private readonly maxTokensParam: 'max_tokens' | 'max_completion_tokens';
 

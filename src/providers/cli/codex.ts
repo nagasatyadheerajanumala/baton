@@ -41,6 +41,7 @@ const TOOL_NOTE =
 export class CodexAdapter implements ProviderAdapter {
   readonly name: string;
   readonly external = true;
+  readonly label = 'ChatGPT plan';
   private readonly command: string;
   private readonly sessions = new CliSessions();
   private readonly disabledServers: string[];

@@ -39,6 +39,11 @@ export function targetState(router: Router, t: Target): { state: TargetState; co
   return { state: cooldownMs > 0 ? 'cooldown' : 'ready', cooldownMs };
 }
 
+/** "ChatGPT plan", "Claude API", ... for a chain entry. */
+export function accountLabel(router: Router, t: Target): string {
+  return router.adapter(t).label ?? t.provider;
+}
+
 export function pricingOverrides(router: Router) {
   return Object.fromEntries(router.chain.map((t) => [t.model, t.pricing]));
 }

@@ -24,14 +24,14 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 
 | Feature | Claude Code | Codex CLI | baton |
 |---|---|---|---|
-| Full-screen TUI | yes | yes | built |
+| Terminal UI (scrollback transcript, permission prompts, model picker, modes) | yes | yes | built (plus --fullscreen split layout) |
 | Background processes view (`/bashes`, tasks) | yes | partial | built (process pane with live output, click to inspect, stop) |
 | Inline diffs for edits | yes | yes | built |
 | Esc / Ctrl-C interrupt | yes | yes | built |
-| Queue a message while the agent works | yes | yes | P0 |
+| Queue a message while the agent works | yes | yes | built |
 | Multi-line input, paste handling | yes | yes | P0 |
 | Open `$EDITOR` for long prompts | yes | yes | P1 |
-| Transcript view (full tool I/O) | yes (ctrl-o) | yes (ctrl-t) | P0 |
+| Transcript view (full tool I/O) | yes (ctrl-o) | yes (ctrl-t) | partial: output previews + ctrl-o full output |
 | Vim keybindings | yes | no | P2 |
 | Custom status line | yes | partial | P2 |
 | Themes / light terminal support | yes | yes | P1 |
@@ -57,7 +57,7 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 |---|---|---|---|
 | Approval prompts for edits and commands | yes | yes | built |
 | Approval modes (ask / auto-edit / full) | yes | yes | built |
-| Allow/deny rules per tool and pattern (`Bash(npm test*)`) | yes | partial | P0 |
+| Allow/deny rules per tool and pattern (`Bash(npm test*)`) | yes | partial | partial: read-only commands auto-allowed, session-wide allow; P0 per-pattern rules |
 | Plan mode (read-only until approved) | yes | partial | P0 |
 | OS sandbox for commands (Seatbelt / Landlock), network off by default | yes | yes | P1 |
 | Workspace trust prompt for new folders | yes | yes | P1 |

@@ -28,6 +28,8 @@ export interface ProviderAdapter {
    * final answer; intermediate steps are already recorded in the session.
    */
   readonly external?: boolean;
+  /** Human name of the account behind this adapter, e.g. "ChatGPT plan", "Claude API". */
+  readonly label?: string;
   complete(req: CompletionRequest): Promise<AssistantTurn>;
 }
 

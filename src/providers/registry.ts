@@ -14,6 +14,9 @@ import type { ProviderAdapter } from './types.js';
  * this target and the rest of the chain keeps working.
  */
 export class MissingKeyAdapter implements ProviderAdapter {
+  get label(): string {
+    return `${this.name} (no key)`;
+  }
   constructor(
     readonly name: string,
     readonly envName: string,
@@ -55,6 +58,10 @@ export function buildAdapters(config: Config, env: NodeJS.ProcessEnv = process.e
           ? new OpenAIResponsesAdapter({ ...common, reasoningEffort: p.reasoningEffort })
           : new OpenAIChatAdapter({ ...common, maxTokensParam: p.maxTokensParam }),
     );
+  }
+  for (const [name, adapter] of adapters) {
+    const label = config.providers[name]?.label;
+    if (label) Object.defineProperty(adapter, 'label', { value: label, configurable: true });
   }
   return adapters;
 }

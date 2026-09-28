@@ -3,7 +3,9 @@ import { homedir } from 'node:os';
 import { render } from 'ink';
 import type { Agent } from '../../agent/loop.js';
 import { runProcess } from '../../tools/process.js';
+import { accountLabel } from '../commands.js';
 import { App } from './App.js';
+import { InlineApp } from './InlineApp.js';
 import { MOUSE_OFF, MOUSE_ON, type MouseEvent, mouseFilteredStdin } from './mouse.js';
 import type { ApprovalMode, TuiStore } from './store.js';
 
@@ -12,6 +14,8 @@ export interface TuiOptions {
   version: string;
   mouse: boolean;
   approval: ApprovalMode;
+  /** inline (default): scrollback transcript like Claude Code. fullscreen: panes + mouse. */
+  layout?: 'inline' | 'fullscreen';
 }
 
 async function cwdLabel(cwd: string): Promise<string> {
@@ -27,6 +31,10 @@ async function cwdLabel(cwd: string): Promise<string> {
 /** Full-screen UI. Resolves when the user exits; all started processes are stopped by then. */
 export async function runTui(agent: Agent, opts: TuiOptions): Promise<void> {
   const { store } = opts;
+  const router = agent.router;
+  store.describe = (tg) => ({ label: accountLabel(router, tg), model: tg.model, plan: router.adapter(tg).external === true });
+  store.current = () => router.current;
+  if ((opts.layout ?? 'inline') === 'inline') return runInline(agent, opts);
   const mouseBus = new EventEmitter();
   const stdin = opts.mouse ? mouseFilteredStdin(process.stdin, (e) => mouseBus.emit('mouse', e)) : process.stdin;
   const onMouse = opts.mouse
@@ -65,4 +73,31 @@ export async function runTui(agent: Agent, opts: TuiOptions): Promise<void> {
   if (opts.mouse) process.stdout.write(MOUSE_ON);
   await instance.waitUntilExit();
   restoreTerminal();
+}
+
+/** Inline layout: no alternate screen, no mouse capture; the terminal keeps its own scrollback. */
+async function runInline(agent: Agent, opts: TuiOptions): Promise<void> {
+  const { store } = opts;
+  let pending: NodeJS.Timeout | undefined;
+  agent.processes.on('change', () => {
+    pending ??= setTimeout(() => {
+      pending = undefined;
+      store.changed();
+    }, 150);
+  });
+  const cleanup = () => agent.processes.killAll();
+  process.once('exit', cleanup);
+  for (const sig of ['SIGTERM', 'SIGHUP'] as const) {
+    process.once(sig, () => {
+      cleanup();
+      process.exit(128 + (sig === 'SIGTERM' ? 15 : 1));
+    });
+  }
+  const instance = render(<InlineApp agent={agent} store={store} version={opts.version} onExit={cleanup} />, {
+    exitOnCtrlC: false,
+    maxFps: 30,
+    patchConsole: true,
+  });
+  await instance.waitUntilExit();
+  cleanup();
 }

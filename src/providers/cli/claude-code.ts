@@ -21,6 +21,7 @@ export interface ClaudeCodeOptions {
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly name: string;
   readonly external = true;
+  readonly label = 'Claude plan';
   private readonly command: string;
   private readonly sessions = new CliSessions();
 

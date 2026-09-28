@@ -4,7 +4,9 @@ import { resolve } from 'node:path';
 import { diffLines } from 'diff';
 import type { AgentEvents } from '../../agent/loop.js';
 import type { ToolCallBlock, ToolResultBlock } from '../../ir/types.js';
-import { targetLabel } from '../../router/router.js';
+import { type Target, targetLabel } from '../../router/router.js';
+import { cleanOutput } from './clean.js';
+import { unwrapShell } from '../../tools/readonly.js';
 
 export interface DiffLine {
   sign: '+' | '-';
@@ -29,9 +31,17 @@ export type Entry =
       added?: number;
       removed?: number;
       procId?: number;
+      /** Ran inside the agent CLI's own read-only sandbox (Codex), not through baton. */
+      external?: boolean;
+      /** Last few lines of output, shown under the call. */
+      preview?: string[];
+      /** Total output lines, for "+N more". */
+      outputLines?: number;
+      /** Full (capped) output, for Ctrl+O. */
+      output?: string;
     }
-  | { kind: 'switch'; to: string; reason: string }
-  | { kind: 'retry'; target: string; seconds: number; reason: string }
+  | { kind: 'switch'; fromLabel: string; toLabel: string; toModel: string; reason: string }
+  | { kind: 'retry'; label: string; seconds: number; reason: string }
   | { kind: 'compact'; target: string; applied: string[]; tokens: number }
   | { kind: 'notice'; text: string; level: 'info' | 'warn' | 'error' }
   | { kind: 'output'; text: string }
@@ -39,10 +49,39 @@ export type Entry =
 
 export interface ApprovalRequest {
   summary: string;
+  call?: ToolCallBlock;
+  /** "gpt-6-astra · ChatGPT plan": who is asking. */
+  asker: string;
   resolve: (ok: boolean) => void;
 }
 
+/** Plain-English reason a provider was left, for switch/retry lines. */
+export function humanReason(kind: string, isPlan: boolean): string {
+  switch (kind) {
+    case 'quota':
+      return isPlan ? 'hit its usage limit' : 'ran out of credits or quota';
+    case 'rate_limit':
+      return 'is rate-limited';
+    case 'overloaded':
+      return 'is overloaded';
+    case 'network':
+      return "couldn't be reached";
+    case 'auth':
+      return isPlan ? "isn't signed in" : 'rejected its API key';
+    case 'model_not_found':
+      return "doesn't offer this model";
+    default:
+      return 'failed';
+  }
+}
+
 export type ApprovalMode = 'ask' | 'auto-edit' | 'yolo';
+
+export const MODE_LABELS: Record<ApprovalMode, string> = {
+  ask: 'ask before edits and commands',
+  'auto-edit': 'auto-approve file edits',
+  yolo: 'full access: never ask',
+};
 
 const VERBS: Record<string, string> = {
   read_file: 'read',
@@ -70,7 +109,7 @@ export function toolLabel(call: ToolCallBlock): { verb: string; detail: string }
     case 'search':
       return { verb, detail: `/${String(i.pattern ?? '')}/${i.glob ? `  in ${String(i.glob)}` : ''}` };
     case 'bash':
-      return { verb, detail: String(i.command ?? '') };
+      return { verb, detail: unwrapShell(String(i.command ?? '')) };
     case 'process_output':
     case 'process_kill':
       return { verb, detail: `#${String(i.id ?? '?')}` };
@@ -132,7 +171,19 @@ export class TuiStore extends EventEmitter {
   /** Conversation scroll, in lines up from the bottom. */
   scroll = 0;
   pane = { open: false, userClosed: false, focused: false, selectedId: undefined as number | undefined, expanded: false, scroll: 0 };
+  /** Messages typed while the agent works; sent in order when the turn ends. */
+  queue: string[] = [];
+  picker = { open: false, index: 0 };
+  /** Highlighted option in the permission prompt. */
+  approvalChoice = 0;
+  /** Entries before this index are final and printed to scrollback (inline mode). */
+  printed = 0;
+  /** Bumped on /clear so the scrollback printer restarts. */
+  epoch = 0;
   version = 0;
+  /** Set by the app: human labels for chain entries. */
+  describe: (t: Target) => { label: string; model: string; plan: boolean } = (t) => ({ label: t.provider, model: t.model, plan: false });
+  current: () => Target | undefined = () => undefined;
 
   constructor(
     readonly cwd: string,
@@ -155,7 +206,34 @@ export class TuiStore extends EventEmitter {
   clear(): void {
     this.entries = [];
     this.scroll = 0;
+    this.printed = 0;
+    this.epoch++;
     this.changed();
+  }
+
+  /** Entries that can no longer change, in order, stopping at the first live one. */
+  finalCount(): number {
+    let n = this.printed;
+    while (n < this.entries.length && isFinal(this.entries[n]!)) n++;
+    return n;
+  }
+
+  cycleMode(): ApprovalMode {
+    const order: ApprovalMode[] = ['ask', 'auto-edit', 'yolo'];
+    this.approvalMode = order[(order.indexOf(this.approvalMode) + 1) % order.length]!;
+    this.changed();
+    return this.approvalMode;
+  }
+
+  enqueue(text: string): void {
+    this.queue.push(text);
+    this.changed();
+  }
+
+  dequeue(): string | undefined {
+    const next = this.queue.shift();
+    this.changed();
+    return next;
   }
 
   private flushLive(interrupted = false): void {
@@ -187,20 +265,28 @@ export class TuiStore extends EventEmitter {
   }
 
   /** Approval gate handed to the agent. */
-  approve = (summary: string): Promise<boolean> => {
+  approve = (summary: string, call?: ToolCallBlock): Promise<boolean> => {
     if (this.approvalMode === 'yolo') return Promise.resolve(true);
     if (this.approvalMode === 'auto-edit' && !summary.startsWith('$ ')) return Promise.resolve(true);
+    const t = this.current();
+    const d = t ? this.describe(t) : undefined;
     return new Promise((resolve) => {
-      this.approval = { summary, resolve };
+      this.approval = { summary, call, asker: d ? `${d.model} · ${d.label}` : 'the model', resolve };
+      this.approvalChoice = 0;
       this.changed();
     });
   };
 
+  /**
+   * y: allow once. a: allow and stop asking for this session (edits only for
+   * file changes, everything for commands). n: deny; the model is told to
+   * stop and wait for your instructions.
+   */
   answerApproval(answer: 'y' | 'n' | 'a'): void {
     const req = this.approval;
     if (!req) return;
     this.approval = null;
-    if (answer === 'a') this.approvalMode = 'yolo';
+    if (answer === 'a') this.approvalMode = req.summary.startsWith('$ ') ? 'yolo' : this.approvalMode === 'yolo' ? 'yolo' : 'auto-edit';
     req.resolve(answer !== 'n');
     this.changed();
   }
@@ -222,6 +308,7 @@ export class TuiStore extends EventEmitter {
         this.flushLive();
         const { verb, detail } = toolLabel(call);
         const entry: Extract<Entry, { kind: 'tool' }> = { kind: 'tool', callId: call.id, verb, detail, status: 'running', startedAt: Date.now() };
+        if (call.id.startsWith('ext_')) entry.external = true;
         if (call.name === 'edit_file') {
           const d = editDiff(this.cwd, call.input);
           entry.diff = d.lines;
@@ -237,11 +324,14 @@ export class TuiStore extends EventEmitter {
       },
       onToolEnd: (call, result) => this.finishTool(call, result),
       onRetry: (target, ms, why) => {
-        this.push({ kind: 'retry', target: targetLabel(target), seconds: Math.ceil(ms / 1000), reason: why.kind });
+        const d = this.describe(target);
+        this.push({ kind: 'retry', label: d.label, seconds: Math.ceil(ms / 1000), reason: humanReason(why.kind, d.plan) });
       },
       onSwitch: (from, to, why) => {
         this.flushLive(true);
-        this.push({ kind: 'switch', to: targetLabel(to), reason: `${from.provider} ${why.kind.replace('_', ' ')}` });
+        const f = this.describe(from);
+        const t = this.describe(to);
+        this.push({ kind: 'switch', fromLabel: f.label, toLabel: t.label, toModel: t.model, reason: humanReason(why.kind, f.plan) });
       },
       onCompact: (target, r) => {
         const last = this.entries[this.entries.length - 1];
@@ -258,6 +348,7 @@ export class TuiStore extends EventEmitter {
     if (!entry) return;
     entry.endedAt = Date.now();
     entry.status = result.isError ? 'error' : 'ok';
+    setPreview(entry, call, result);
     const bg = /background process #(\d+)/.exec(result.content);
     if (call.name === 'bash') {
       if (bg && call.input.background === true && !result.isError) {
@@ -266,8 +357,9 @@ export class TuiStore extends EventEmitter {
         entry.summary = `background #${bg[1]}`;
         if (!this.pane.userClosed) this.openPane(true, false);
       } else {
-        const exit = /\[(exit \d+|timed out[^\]]*|killed)\]\s*$/.exec(result.content)?.[1];
-        entry.summary = [exit, `${((entry.endedAt - entry.startedAt) / 1000).toFixed(1)}s`].filter(Boolean).join(' · ');
+        const exit = /\[(exit \S+|timed out[^\]]*|killed)\]\s*$/.exec(result.content)?.[1];
+        const secs = (entry.endedAt - entry.startedAt) / 1000;
+        entry.summary = [exit, entry.external ? 'in Codex sandbox' : secs >= 1 ? `${secs.toFixed(1)}s` : ''].filter(Boolean).join(' · ');
       }
     } else if (call.name === 'search') {
       const n = result.content === 'No matches.' ? 0 : result.content.split('\n').filter(Boolean).length;
@@ -277,4 +369,36 @@ export class TuiStore extends EventEmitter {
     if (result.isError && call.name === 'bash' && !entry.summary) entry.error = result.content.split('\n')[0]!.slice(0, 200);
     this.changed();
   }
+}
+
+/** Final entries never change again, so they can be printed to scrollback. */
+export function isFinal(e: Entry): boolean {
+  return e.kind !== 'tool' || e.status !== 'running' || e.procId !== undefined;
+}
+
+const PREVIEW_LINES = 3;
+const OUTPUT_CAP = 20_000;
+
+/** Short preview and full (capped) output of a tool result, for the transcript. */
+function setPreview(entry: Extract<Entry, { kind: 'tool' }>, call: ToolCallBlock, result: ToolResultBlock): void {
+  if (call.name === 'edit_file' || call.name === 'write_file') return; // the diff/counts say it all
+  let text = cleanOutput(result.content).replace(/\n?\[(exit \S+|timed out[^\]]*|killed)\]\s*$/, '');
+  if (call.name === 'read_file') {
+    const n = text.split('\n').filter((l) => /^\s*\d+\t/.test(l)).length;
+    entry.summary = result.isError ? entry.summary : `${n} line${n === 1 ? '' : 's'}`;
+    entry.output = text.slice(0, OUTPUT_CAP);
+    entry.outputLines = n;
+    return;
+  }
+  if (call.name === 'list_files') {
+    const n = text.split('\n').filter(Boolean).length;
+    entry.summary = `${n} file${n === 1 ? '' : 's'}`;
+  }
+  // Background starts: show the process's own output, not baton's instructions to the model.
+  if (call.name === 'bash' && call.input.background === true) text = text.includes('Output so far:\n') ? text.split('Output so far:\n')[1]! : '';
+  text = text.replace(/^\(no output\)$/, '').trimEnd();
+  const lines = text ? text.split('\n') : [];
+  entry.outputLines = lines.length;
+  entry.preview = lines.filter((l) => l.trim()).slice(0, PREVIEW_LINES);
+  entry.output = text.slice(0, OUTPUT_CAP);
 }

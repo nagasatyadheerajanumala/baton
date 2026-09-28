@@ -21,7 +21,7 @@ export interface AgentEvents {
 
 export interface AgentOptions {
   cwd: string;
-  approve: (summary: string) => Promise<boolean>;
+  approve: (summary: string, call?: ToolCallBlock) => Promise<boolean>;
   /** Shared with the UI; a private one is created if omitted. */
   processes?: ProcessManager;
   /** Hard stop on runaway tool loops. */

@@ -1,6 +1,7 @@
 import type { ToolCallBlock, ToolResultBlock, ToolSpec } from '../ir/types.js';
 import { editFileTool, listFilesTool, readFileTool, searchTool, writeFileTool } from './fs.js';
 import { bashTool, gitStatusTool, processKillTool, processListTool, processOutputTool } from './shell.js';
+import { isReadOnlyCommand } from './readonly.js';
 import { type Tool, type ToolContext, ToolInputError } from './types.js';
 
 export const DEFAULT_TOOLS: Tool[] = [
@@ -52,7 +53,7 @@ export class ToolEngine {
     const missing = (tool.spec.inputSchema.required ?? []).filter((k) => call.input[k] === undefined);
     if (missing.length) return result(`Missing required argument(s): ${missing.join(', ')}`, true);
 
-    if (tool.mutates && !(await ctx.approve(tool.describe(call.input)))) {
+    if (tool.mutates && !needsNoApproval(call) && !(await ctx.approve(tool.describe(call.input), call))) {
       return result('The user denied this action. Ask them how to proceed or try a different approach.', true);
     }
 
@@ -66,4 +67,9 @@ export class ToolEngine {
       return result(`${e.code ? `${e.code}: ` : ''}${e.message ?? String(err)}`, true);
     }
   }
+}
+
+/** Read-only shell commands (git status, ls, rg, ...) run without a prompt, like other coding agents. */
+export function needsNoApproval(call: ToolCallBlock): boolean {
+  return call.name === 'bash' && call.input.background !== true && typeof call.input.command === 'string' && isReadOnlyCommand(call.input.command);
 }

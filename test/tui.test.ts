@@ -43,10 +43,10 @@ describe('layout primitives', () => {
     expect(cleanOutput('\x1b[32mok\x1b[0m\nprogress 10%\rprogress 100%\n')).toBe('ok\nprogress 100%\n');
   });
 
-  it('draws a provider switch as one full-width labelled rule', () => {
-    const [line] = renderEntry({ kind: 'switch', to: 'anthropic/claude-sonnet-5-5', reason: 'openai quota' }, { width: 90, now: 0, spinner: '', processes: new ProcessManager() });
-    expect(width(line!)).toBe(90);
-    expect(strip(line!)).toContain('switched to anthropic/claude-sonnet-5-5 · openai quota');
+  it('explains a provider switch in plain words', () => {
+    const lines = renderEntry({ kind: 'switch', fromLabel: 'ChatGPT plan', toLabel: 'Claude plan', toModel: 'claude-opus-5-5', reason: 'hit its usage limit' }, { width: 90, now: 0, spinner: '', processes: new ProcessManager() }).map(strip);
+    expect(lines).toContain('↪ Switched to Claude plan (claude-opus-5-5)');
+    expect(lines.join(' ')).toContain('ChatGPT plan hit its usage limit. The conversation and your files carried over.');
   });
 });
 
@@ -202,5 +202,99 @@ describe('TuiStore', () => {
     const tgt = { provider: 'openai', model: 'gpt', contextWindow: 1, maxOutputTokens: 1 };
     ev.onSwitch!(tgt, { ...tgt, provider: 'anthropic', model: 'claude' }, { kind: 'quota', message: '' });
     expect(store.entries.find((e) => e.kind === 'assistant')).toMatchObject({ interrupted: true });
+  });
+});
+
+describe('inline UI pieces', () => {
+  it('lays out a shell script one command per line, loop bodies indented', async () => {
+    const { prettyShell } = await import('../src/ui/tui/panels.js');
+    expect(prettyShell('for repo in a b; do echo "$repo"; git -C "$repo" status; done')).toEqual([
+      'for repo in a b; do',
+      '  echo "$repo"',
+      '  git -C "$repo" status',
+      'done',
+    ]);
+    expect(prettyShell('npm ci && npm test')).toEqual(['npm ci', '&& npm test']);
+  });
+
+  it('permission prompt: clear title, full command, numbered choices, who is asking', async () => {
+    const { renderApproval } = await import('../src/ui/tui/panels.js');
+    const lines = renderApproval(
+      { summary: '$ npm install -D vitest@5', call: { type: 'tool_call', id: 'c', name: 'bash', input: { command: 'npm install -D vitest@5' } }, asker: 'gpt-6-astra · ChatGPT plan', choice: 1, cwd: '/x', cwdLabel: '~/code/shop', mode: 'ask' },
+      100,
+    ).map(strip);
+    const text = lines.join('\n');
+    expect(lines[0]).toContain('Run a shell command?');
+    expect(lines[0]).toContain('gpt-6-astra · ChatGPT plan');
+    expect(text).toContain('npm install -D vitest@5');
+    expect(text).toContain('in ~/code/shop');
+    expect(text).toMatch(/1\. Yes[^\n]*\n[^\n]*❯ 2\. Yes, and don't ask again for commands this session/);
+    expect(text).toContain('3. No, and tell it what to do instead');
+    expect(lines.every((l) => width(l) === 100)).toBe(true);
+  });
+
+  it('model picker shows account and when a limited model comes back', async () => {
+    const { renderPicker } = await import('../src/ui/tui/panels.js');
+    const now = new Date('2026-09-28T15:00:00').getTime();
+    const text = renderPicker(
+      [
+        { model: 'gpt-6-astra', label: 'ChatGPT plan', state: 'cooldown', cooldownMs: 42 * 60_000 },
+        { model: 'claude-opus-5-5', label: 'Claude plan', state: 'active', cooldownMs: 0 },
+      ],
+      1,
+      100,
+      now,
+    ).map(strip).join('\n');
+    expect(text).toMatch(/gpt-6-astra\s+ChatGPT plan\s+limit reached · retry after 3:42/);
+    expect(text).toMatch(/❯ ● claude-opus-5-5\s+Claude plan\s+in use/);
+  });
+
+  it('footer says in words what the budget and mode are', async () => {
+    const { renderFooter } = await import('../src/ui/tui/panels.js');
+    const plan = strip(renderFooter({ model: 'claude-opus-5-5', label: 'Claude plan', contextLeftPct: 87, plan: true, usd: 0, mode: 'ask', running: 2, switches: 1 }, 160));
+    expect(plan).toContain('claude-opus-5-5 · Claude plan · 87% context left · on your plan · 1 switch');
+    expect(plan).toContain('⏵ ask before edits and commands (shift+tab)');
+    expect(plan).toContain('⚙ 2 running (^P)');
+    const api = strip(renderFooter({ model: 'claude-sonnet-5-5', label: 'Claude API', contextLeftPct: 99, plan: false, usd: 0.314, mode: 'yolo', running: 0, switches: 0 }, 160));
+    expect(api).toContain('$0.31 so far');
+    expect(api).toContain('full access: never ask');
+  });
+
+  it('queues follow-ups, cycles permission modes, and only prints finished steps', () => {
+    const store = new TuiStore(tmpdir());
+    store.enqueue('one');
+    store.enqueue('two');
+    expect(store.dequeue()).toBe('one');
+    expect(store.queue).toEqual(['two']);
+    expect([store.cycleMode(), store.cycleMode(), store.cycleMode()]).toEqual(['auto-edit', 'yolo', 'ask']);
+
+    const ev = store.events();
+    store.beginTurn('go');
+    const call = { type: 'tool_call' as const, id: 'c1', name: 'bash', input: { command: 'npm test' } };
+    ev.onToolStart!(call, '');
+    expect(store.finalCount()).toBe(1); // the user message is printed; the running tool stays live
+    ev.onToolEnd!(call, { type: 'tool_result', callId: 'c1', content: 'line1\nline2\nline3\nline4\nline5\n[exit 0]' });
+    expect(store.finalCount()).toBe(2);
+    const tool = store.entries[1] as Extract<(typeof store.entries)[number], { kind: 'tool' }>;
+    expect(tool.preview).toEqual(['line1', 'line2', 'line3']);
+    expect(tool.outputLines).toBe(5);
+    expect(tool.summary).toMatch(/^exit 0/);
+  });
+
+  it('"allow always" on a file edit only auto-approves edits, not commands', async () => {
+    const store = new TuiStore(tmpdir());
+    const p = store.approve('edit src/a.ts');
+    store.answerApproval('a');
+    expect(await p).toBe(true);
+    expect(store.approvalMode).toBe('auto-edit');
+    void store.approve('$ rm -rf build');
+    expect(store.approval?.summary).toBe('$ rm -rf build'); // still asks for commands
+  });
+
+  it('labels switches and retries with account names and plain reasons', async () => {
+    const { humanReason } = await import('../src/ui/tui/store.js');
+    expect(humanReason('quota', true)).toBe('hit its usage limit');
+    expect(humanReason('quota', false)).toBe('ran out of credits or quota');
+    expect(humanReason('auth', true)).toBe("isn't signed in");
   });
 });
