@@ -7,6 +7,7 @@ Coding-agent harness that hot-swaps LLM providers mid-session (e.g. OpenAI → C
 - `npm test` runs the vitest suite (unit, scripted e2e, and real-SDK wire tests against a local fake server; no API keys needed)
 - `npm run typecheck`
 - `npm run build` compiles to `dist/`; `npm run dev -- -p "prompt"` runs from source
+- If vitest fails with "Cannot find native binding", or `package-lock.json` suddenly loses hundreds of lines, run `git checkout package-lock.json && npm ci`. npm drops platform-specific optional packages on `npm link` / `npm install <pkg>` (npm/cli#4828); don't commit that lockfile change.
 
 ## Architecture
 
