@@ -46,6 +46,12 @@ export function sessionCost(messages: Message[], overrides: Record<string, Price
   for (const m of messages) {
     const u = m.meta.usage;
     if (!u) continue;
+    if (m.meta.subscription) {
+      // Covered by the user's plan; count tokens, not dollars.
+      total.inputTokens += u.inputTokens;
+      total.outputTokens += u.outputTokens;
+      continue;
+    }
     total.inputTokens += u.inputTokens;
     total.outputTokens += u.outputTokens;
     const price = m.meta.model ? priceFor(m.meta.model, overrides[m.meta.model]) : undefined;

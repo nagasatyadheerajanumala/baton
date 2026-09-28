@@ -12,7 +12,7 @@ export class ScriptedAdapter implements ProviderAdapter {
   ) {}
 
   async complete(req: CompletionRequest): Promise<AssistantTurn> {
-    this.requests.push(structuredClone({ ...req, onText: undefined, signal: undefined }));
+    this.requests.push(structuredClone({ ...req, onText: undefined, signal: undefined, bridge: undefined }));
     const step = this.steps.shift();
     if (!step) throw new Error(`${this.name}: script exhausted`);
     if (step instanceof Error) throw step;

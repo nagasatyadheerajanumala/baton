@@ -1,0 +1,41 @@
+#!/usr/bin/env node
+// Fake Codex CLI for tests. Behaviour is driven by FAKE_CODEX_MODE.
+const args = process.argv.slice(2);
+const mode = process.env.FAKE_CODEX_MODE ?? 'tool';
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+if (args[0] === 'login' && args[1] === 'status') {
+  if (mode === 'logged-out') { process.stderr.write('Not logged in\n'); process.exit(1); }
+  process.stderr.write('Logged in using ChatGPT\n'); // the real CLI reports status on stderr
+  process.exit(0);
+}
+let prompt = '';
+process.stdin.on('data', (d) => (prompt += d));
+process.stdin.on('end', async () => {
+  const log = process.env.FAKE_CLI_LOG;
+  if (log) require('node:fs').appendFileSync(log, JSON.stringify({ args, prompt }) + '\n');
+  const cfg = args.filter((a, i) => args[i - 1] === '-c');
+  const url = /mcp_servers\.baton\.url="([^"]+)"/.exec(cfg.join(' '))[1];
+  const resumeIdx = args.indexOf('resume');
+  const thread = resumeIdx >= 0 ? args[resumeIdx + 1] : 'codex-thread-1';
+  out({ type: 'thread.started', thread_id: thread });
+  out({ type: 'turn.started' });
+  if (mode === 'limit') {
+    out({ type: 'turn.failed', error: { message: "You've hit your usage limit. Upgrade to Pro or try again in 2 hours." } });
+    process.exit(1);
+  }
+  const rpc = async (method, params) => (await (await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json());
+  if (prompt.includes('Call the echo tool')) {
+    await rpc('tools/call', { name: 'echo', arguments: { text: 'baton' } });
+    out({ type: 'item.completed', item: { id: 'e1', type: 'agent_message', text: 'OK' } });
+    out({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
+    return;
+  }
+  out({ type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'Looking around first.' } });
+  out({ type: 'item.started', item: { id: 'i1', type: 'command_execution', command: 'ls', status: 'in_progress' } });
+  out({ type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: 'ls', aggregated_output: 'a.txt\n', exit_code: 0, status: 'completed' } });
+  out({ type: 'item.started', item: { id: 'i2', type: 'mcp_tool_call', server: 'baton', tool: 'write_file', status: 'in_progress' } });
+  const r = await rpc('tools/call', { name: 'write_file', arguments: { path: 'out.txt', content: 'from codex\n' } });
+  out({ type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'baton', tool: 'write_file', status: 'completed', result: r.result } });
+  out({ type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'Done.' } });
+  out({ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 5, reasoning_output_tokens: 2 } });
+});

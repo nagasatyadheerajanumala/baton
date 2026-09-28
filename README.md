@@ -16,23 +16,26 @@ Hit a rate limit or run out of quota halfway through a task, and baton hands the
 - **Local tool engine.** read/write/edit files, search, bash, git status. Changes require approval (or `--approval auto-edit` / `--yes`).
 - **Resumable sessions.** Every session is an append-only log in `~/.baton/sessions/`; pick up with `--continue` or `--resume <id>`.
 
-Supported providers: OpenAI, Anthropic, and anything OpenAI-compatible (OpenRouter, LiteLLM, Ollama, vLLM).
+Works with your **Claude Pro/Max and ChatGPT subscriptions** (through the official Claude Code and Codex CLIs, which you sign in to yourself), **API keys** for OpenAI and Anthropic, and anything OpenAI-compatible (OpenRouter, LiteLLM, Ollama, vLLM). Mix them: plans first, API keys as overflow.
 
 ## Quick start
 
-Requires Node 20+ and an **API key** from at least one provider. ChatGPT Plus/Pro and Claude Pro/Max subscriptions don't include API access; see the [setup guide](docs/SETUP.md) for getting keys and credits.
+Requires Node 20+.
 
 ```bash
 git clone https://github.com/nagasatyadheerajanumala/baton.git
 cd baton && npm install && npm link   # npm install also builds; npm link puts `baton` on your PATH
-export OPENAI_API_KEY=sk-...          # any combination of keys works
-export ANTHROPIC_API_KEY=sk-ant-...
-baton doctor                          # verifies each model with a real tool call
-baton                                 # interactive
-baton -p "explain src/index.ts"       # one-shot
+
+claude auth login                     # Claude Pro/Max (official Claude Code CLI)
+codex login                           # ChatGPT plan (official Codex CLI)
+export ANTHROPIC_API_KEY=sk-ant-...   # optional: API keys as overflow
+
+baton init                            # finds your signed-in plans and keys, writes the failover chain
+baton doctor                          # verifies each one with a real tool call
+baton                                 # start
 ```
 
-With no config file, baton builds its chain from the keys it finds (OpenAI `gpt-6-sol` first, then Claude `claude-sonnet-5-5`). Run `baton init` to write `~/.baton/config.json` and choose your own order and models; [`docs/SETUP.md`](docs/SETUP.md) covers every option.
+baton never sees your subscription logins; the official CLIs handle them. [`docs/SETUP.md`](docs/SETUP.md) covers every option.
 
 ## Keys and commands
 
@@ -75,4 +78,4 @@ See [AGENTS.md](AGENTS.md) for architecture and the invariants the code relies o
 
 ## Status
 
-Early (v0.1). See the [roadmap](docs/ROADMAP.md). Not supported: logging in with Claude/ChatGPT subscription accounts instead of API keys.
+Early (v0.1). See the [roadmap](docs/ROADMAP.md).

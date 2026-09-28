@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+// Fake Claude Code CLI for tests. Behaviour is driven by FAKE_CLAUDE_MODE.
+const args = process.argv.slice(2);
+const mode = process.env.FAKE_CLAUDE_MODE ?? 'tool';
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+if (args[0] === 'auth' && args[1] === 'status') {
+  out({ loggedIn: mode !== 'logged-out', authMethod: mode === 'logged-out' ? 'none' : 'claude.ai' });
+  process.exit(0);
+}
+let prompt = '';
+process.stdin.on('data', (d) => (prompt += d));
+process.stdin.on('end', async () => {
+  const log = process.env.FAKE_CLI_LOG;
+  if (log) require('node:fs').appendFileSync(log, JSON.stringify({ args, prompt }) + '\n');
+  const mcp = JSON.parse(args[args.indexOf('--mcp-config') + 1]);
+  const url = mcp.mcpServers.baton.url;
+  const resume = args.includes('--resume') ? args[args.indexOf('--resume') + 1] : undefined;
+  const sessionId = resume ?? 'claude-session-1';
+  out({ type: 'system', subtype: 'init', session_id: sessionId, tools: [], mcp_servers: [{ name: 'baton', status: 'connected' }] });
+  if (mode === 'limit') {
+    out({ type: 'result', subtype: 'success', is_error: true, result: 'Claude AI usage limit reached|' + (Math.floor(Date.now() / 1000) + 3600), session_id: sessionId });
+    return;
+  }
+  if (mode === 'logged-out-run') {
+    out({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed', session_id: sessionId });
+    return;
+  }
+  const rpc = async (method, params) => (await (await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json());
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake-claude', version: '0' } });
+  const delta = (text) => out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } });
+  if (prompt.includes('Call the echo tool')) {
+    // Behave like `baton doctor` expects: call echo, then answer OK.
+    const r = await rpc('tools/call', { name: 'echo', arguments: { text: 'baton' } });
+    delta('OK');
+    out({ type: 'result', subtype: 'success', is_error: false, result: r.result.content[0].text === 'baton' ? 'OK' : 'bad', session_id: sessionId, usage: {} });
+    return;
+  }
+  delta('Writing the file.');
+  out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Writing the file.' }, { type: 'tool_use', id: 'toolu_1', name: 'mcp__baton__write_file', input: { path: 'out.txt', content: 'from claude\n' } }] } });
+  const r = await rpc('tools/call', { name: 'write_file', arguments: { path: 'out.txt', content: 'from claude\n' } });
+  out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: r.result.content[0].text }] } });
+  delta('Done.');
+  out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } });
+  out({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: sessionId, usage: { input_tokens: 10, cache_read_input_tokens: 90, cache_creation_input_tokens: 0, output_tokens: 7 } });
+});

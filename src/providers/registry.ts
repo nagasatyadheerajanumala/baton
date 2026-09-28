@@ -3,6 +3,8 @@ import type { AssistantTurn } from '../ir/types.js';
 import { AnthropicAdapter } from './anthropic.js';
 import { OpenAIChatAdapter } from './openai.js';
 import { OpenAIResponsesAdapter } from './openai-responses.js';
+import { ClaudeCodeAdapter } from './cli/claude-code.js';
+import { CodexAdapter } from './cli/codex.js';
 import type { ProviderAdapter } from './types.js';
 
 /**
@@ -30,6 +32,14 @@ export function buildAdapters(config: Config, env: NodeJS.ProcessEnv = process.e
   const adapters = new Map<string, ProviderAdapter>();
   for (const name of used) {
     const p = config.providers[name]!;
+    if (p.type === 'claude-code') {
+      adapters.set(name, new ClaudeCodeAdapter({ name, command: p.command }));
+      continue;
+    }
+    if (p.type === 'codex') {
+      adapters.set(name, new CodexAdapter({ name, command: p.command, env }));
+      continue;
+    }
     const apiKey = resolveApiKey(p, env);
     // Local OpenAI-compatible servers (Ollama, vLLM) usually need no key.
     if (!apiKey && p.type !== 'openai-compatible') {

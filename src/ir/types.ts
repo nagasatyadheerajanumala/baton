@@ -63,6 +63,8 @@ export interface MessageMeta {
   usage?: Usage;
   /** Set by compaction when this message is synthesized, not original. */
   synthetic?: boolean;
+  /** Produced through a subscription CLI (Claude Code / Codex): no per-token cost. */
+  subscription?: boolean;
 }
 
 export interface Message {

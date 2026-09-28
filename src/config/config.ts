@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -10,8 +11,12 @@ export interface ProviderConfig {
    *  - "anthropic"          Anthropic Messages API
    *  - "openai"             OpenAI Responses API (api.openai.com)
    *  - "openai-compatible"  Chat Completions: OpenRouter, LiteLLM, Ollama, vLLM...
+   *  - "claude-code"        the official Claude Code CLI, signed in with your Claude Pro/Max plan
+   *  - "codex"              the official Codex CLI, signed in with your ChatGPT plan
    */
-  type: 'anthropic' | 'openai' | 'openai-compatible';
+  type: 'anthropic' | 'openai' | 'openai-compatible' | 'claude-code' | 'codex';
+  /** claude-code / codex: path to the CLI binary (default: found on PATH). */
+  command?: string;
   apiKey?: string;
   /** Name of the env var holding the key (preferred over inline apiKey). */
   apiKeyEnv?: string;
@@ -39,6 +44,9 @@ export interface Config {
   chain: TargetConfig[];
   approval?: ApprovalMode;
 }
+
+export const PROVIDER_TYPES: ProviderConfig['type'][] = ['anthropic', 'openai', 'openai-compatible', 'claude-code', 'codex'];
+export const isSubscriptionType = (t: ProviderConfig['type']) => t === 'claude-code' || t === 'codex';
 
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 /** Reasoning tokens count against this on current models, so leave headroom. */
@@ -68,13 +76,14 @@ export function loadConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): {
 }
 
 /**
- * Zero-config fallback: build a chain from whichever API keys are present.
- * Order mirrors the motivating use case (OpenAI first, fall back to Claude).
+ * Zero-config fallback: build a chain from signed-in subscription CLIs first
+ * (already paid for), then whichever API keys are present as overflow.
  * Model ids are overridable via env because they go stale fast.
  */
-export function configFromEnv(env: NodeJS.ProcessEnv): Config {
+export function configFromEnv(env: NodeJS.ProcessEnv, subs: Subscriptions = detectSubscriptions(env)): Config {
   const providers: Config['providers'] = {};
   const chain: TargetConfig[] = [];
+  addSubscriptions(providers, chain, subs);
 
   if (env.OPENAI_API_KEY) {
     providers.openai = { type: 'openai', apiKeyEnv: 'OPENAI_API_KEY' };
@@ -116,10 +125,10 @@ function validate(config: Config, path: string): void {
   if (!config.providers || typeof config.providers !== 'object') fail('"providers" must be an object');
   if (!Array.isArray(config.chain) || config.chain.length === 0) fail('"chain" must be a non-empty array');
   for (const [name, p] of Object.entries(config.providers)) {
-    if (!['anthropic', 'openai', 'openai-compatible'].includes(p.type)) {
-      fail(`provider "${name}" has unknown type "${String(p.type)}" (expected anthropic | openai | openai-compatible)`);
+    if (!PROVIDER_TYPES.includes(p.type)) {
+      fail(`provider "${name}" has unknown type "${String(p.type)}" (expected ${PROVIDER_TYPES.join(' | ')})`);
     }
-    if (p.apiKey && p.type !== 'openai-compatible') {
+    if (p.apiKey && (p.type === 'anthropic' || p.type === 'openai')) {
       process.emitWarning(`${path}: provider "${name}" has an inline apiKey; prefer "apiKeyEnv" so keys never land in a committed file.`);
     }
   }
@@ -129,17 +138,85 @@ function validate(config: Config, path: string): void {
   }
 }
 
-/** What `baton init` writes: OpenAI first, Claude as fallback, keys from env. */
-export function starterConfig(): Config {
+/**
+ * What `baton init` writes: signed-in subscriptions first, then API keys as
+ * overflow. API entries are included only for keys that are set (or when
+ * there's nothing else), so a subscription-only setup starts without warnings.
+ */
+export function starterConfig(subs: Subscriptions = detectSubscriptions(), env: NodeJS.ProcessEnv = process.env): Config {
+  const providers: Config['providers'] = {};
+  const chain: TargetConfig[] = [];
+  addSubscriptions(providers, chain, subs);
+  const none = chain.length === 0;
+  if (env.OPENAI_API_KEY || none) {
+    providers.openai = { type: 'openai', apiKeyEnv: 'OPENAI_API_KEY' };
+    chain.push({ provider: 'openai', ...DEFAULT_MODELS.openai, maxOutputTokens: DEFAULT_MAX_OUTPUT });
+  }
+  if (env.ANTHROPIC_API_KEY || none) {
+    providers.anthropic = { type: 'anthropic', apiKeyEnv: 'ANTHROPIC_API_KEY' };
+    chain.push({ provider: 'anthropic', ...DEFAULT_MODELS.anthropic, maxOutputTokens: DEFAULT_MAX_OUTPUT });
+  }
+  return { approval: 'ask', providers, chain };
+}
+
+// ---- Subscription CLIs --------------------------------------------------------------
+
+export interface CliStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  /** Codex: the model set in ~/.codex/config.toml, if any. */
+  defaultModel?: string;
+}
+export interface Subscriptions {
+  claude: CliStatus;
+  codex: CliStatus;
+}
+
+/** Run a CLI status command; `out` is stdout + stderr (codex prints its status on stderr). */
+function run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): { ok: boolean; installed: boolean; out: string } {
+  const r = spawnSync(cmd, args, { env: env ?? process.env, timeout: 8_000, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  const installed = !(r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT');
+  return { ok: r.status === 0, installed, out: `${r.stdout ?? ''}\n${r.stderr ?? ''}` };
+}
+
+/** Is each official CLI installed and signed in? Asks the CLIs; never reads their credentials. */
+export function detectSubscriptions(env: NodeJS.ProcessEnv = process.env): Subscriptions {
+  if (env.BATON_NO_SUBSCRIPTIONS) return { claude: { installed: false, loggedIn: false }, codex: { installed: false, loggedIn: false } };
+  const claudeStatus = run('claude', ['auth', 'status'], env);
+  const claudeLoggedIn = /"loggedIn"\s*:\s*true/.test(claudeStatus.out);
+  const codexStatus = run('codex', ['login', 'status'], env);
   return {
-    approval: 'ask',
-    providers: {
-      openai: { type: 'openai', apiKeyEnv: 'OPENAI_API_KEY' },
-      anthropic: { type: 'anthropic', apiKeyEnv: 'ANTHROPIC_API_KEY' },
+    claude: { installed: claudeStatus.installed, loggedIn: claudeLoggedIn },
+    codex: {
+      installed: codexStatus.installed,
+      loggedIn: codexStatus.ok && /logged in/i.test(codexStatus.out) && !/not logged in/i.test(codexStatus.out),
+      defaultModel: codexDefaultModel(env),
     },
-    chain: [
-      { provider: 'openai', ...DEFAULT_MODELS.openai, maxOutputTokens: DEFAULT_MAX_OUTPUT },
-      { provider: 'anthropic', ...DEFAULT_MODELS.anthropic, maxOutputTokens: DEFAULT_MAX_OUTPUT },
-    ],
   };
+}
+
+export function codexHome(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CODEX_HOME ?? join(homedir(), '.codex');
+}
+
+/** Top-level `model = "..."` from Codex's config.toml (not its auth file). */
+export function codexDefaultModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  try {
+    const toml = readFileSync(join(codexHome(env), 'config.toml'), 'utf8');
+    const top = toml.split(/^\s*\[/m)[0] ?? '';
+    return /^\s*model\s*=\s*"([^"]+)"/m.exec(top)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function addSubscriptions(providers: Config['providers'], chain: TargetConfig[], subs: Subscriptions): void {
+  if (subs.codex.loggedIn) {
+    providers.chatgpt = { type: 'codex' };
+    chain.push({ provider: 'chatgpt', model: subs.codex.defaultModel ?? DEFAULT_MODELS.openai.model, contextWindow: DEFAULT_MODELS.openai.contextWindow });
+  }
+  if (subs.claude.loggedIn) {
+    providers.claude = { type: 'claude-code' };
+    chain.push({ provider: 'claude', model: 'claude-opus-5-5', contextWindow: 1_000_000 });
+  }
 }

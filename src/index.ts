@@ -70,8 +70,11 @@ async function main(): Promise<number> {
       return 0;
     }
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, JSON.stringify(starterConfig(), null, 2) + '\n');
-    console.log(`Wrote ${target}\nEdit the chain order/models if you like, export your API keys, then run: baton doctor`);
+    const cfg = starterConfig();
+    writeFileSync(target, JSON.stringify(cfg, null, 2) + '\n');
+    console.log(`Wrote ${target}`);
+    console.log(`Failover chain: ${cfg.chain.map((t) => `${t.provider}/${t.model}`).join(' → ')}`);
+    console.log('Edit the order or models there if you like, then run: baton doctor');
     return 0;
   }
 
@@ -116,7 +119,7 @@ async function main(): Promise<number> {
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => undefined) });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
-    await agent.run(prompt, terminalEvents(), controller.signal);
+    await agent.run(prompt, terminalEvents(), controller.signal).finally(() => agent.close());
     process.stdout.write('\n');
     process.stderr.write(`[${targetLabel(router.current)} · session ${session.id}]\n`);
     return 0;
@@ -131,6 +134,7 @@ async function main(): Promise<number> {
     const store = new TuiStore(session.cwd, approval);
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: store.approve });
     await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval });
+    await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);
     return 0;
   }
@@ -139,6 +143,7 @@ async function main(): Promise<number> {
   const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => rl) });
   await runRepl(agent, rl, source);
   rl.close();
+  await agent.close();
   return 0;
 }
 

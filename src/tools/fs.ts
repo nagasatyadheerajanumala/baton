@@ -77,7 +77,8 @@ export const writeFileTool: Tool = {
     const content = str(input, 'content');
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, 'utf8');
-    return { content: `Wrote ${content.split('\n').length} lines to ${relative(ctx.cwd, abs)}` };
+    const lines = content === '' ? 0 : content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
+    return { content: `Wrote ${lines} line${lines === 1 ? '' : 's'} to ${relative(ctx.cwd, abs)}` };
   },
 };
 

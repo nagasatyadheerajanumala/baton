@@ -241,6 +241,8 @@ export interface StatusInfo {
   running: number;
   busy: boolean;
   paneFocused: boolean;
+  /** Current model runs on a subscription plan (Claude Code / Codex). */
+  plan?: boolean;
 }
 
 export interface StatusLayout {
@@ -251,7 +253,8 @@ export interface StatusLayout {
 
 export function renderStatus(s: StatusInfo, w: number): StatusLayout {
   const tok = s.tokens >= 1000 ? `${(s.tokens / 1000).toFixed(1)}k` : String(s.tokens);
-  const parts = [`ctx ${s.contextPct}%`, `${tok} tok`, `≈$${s.usd.toFixed(2)}${s.partialCost ? '+' : ''}`];
+  const dollars = `≈$${s.usd.toFixed(2)}${s.partialCost ? '+' : ''}`;
+  const parts = [`ctx ${s.contextPct}%`, `${tok} tok`, s.plan ? (s.usd > 0 ? `${dollars} + plan` : 'plan') : dollars];
   if (s.switches) parts.push(`${s.switches} switch${s.switches === 1 ? '' : 'es'}`);
   const left = ` ${t.success(glyph.active)} ${s.model}  ${t.muted(parts.join(` ${glyph.sep} `))}`;
 

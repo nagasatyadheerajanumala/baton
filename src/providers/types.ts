@@ -1,4 +1,5 @@
 import type { AssistantTurn, Message, ToolSpec } from '../ir/types.js';
+import type { ToolBridge } from '../mcp/bridge.js';
 
 export interface CompletionRequest {
   model: string;
@@ -9,6 +10,8 @@ export interface CompletionRequest {
   signal?: AbortSignal;
   /** Streamed text deltas, for live terminal output. */
   onText?: (delta: string) => void;
+  /** Present when the chain includes agent CLIs; they call baton's tools through it. */
+  bridge?: ToolBridge;
 }
 
 /**
@@ -19,6 +22,12 @@ export interface CompletionRequest {
 export interface ProviderAdapter {
   /** Instance name from config, e.g. "anthropic", "openrouter", "ollama". */
   readonly name: string;
+  /**
+   * True for agent CLIs (Claude Code, Codex) that run a whole turn themselves,
+   * executing tools through the bridge. Their complete() returns only the
+   * final answer; intermediate steps are already recorded in the session.
+   */
+  readonly external?: boolean;
   complete(req: CompletionRequest): Promise<AssistantTurn>;
 }
 

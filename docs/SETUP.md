@@ -1,8 +1,11 @@
 # Setting up baton
 
-baton talks to model providers through their **APIs**, using API keys. You need at least one provider; two or more is what makes failover useful.
+baton can use two kinds of accounts, and you can mix them in one failover chain:
 
-> **Subscriptions are not API access.** ChatGPT Plus/Pro and Claude Pro/Max are chat subscriptions. They do not include API credits, and baton cannot use them. API usage is billed separately, pay-as-you-go, on each provider's developer platform.
+- **Subscriptions** (Claude Pro/Max, ChatGPT Plus/Pro): baton drives the official `claude` and `codex` CLIs, signed in with your plan. Usage counts against your plan, not per-token billing.
+- **API keys** (OpenAI Platform, Claude Console): pay-as-you-go. Good as overflow when a plan hits its usage limit.
+
+A typical chain: ChatGPT plan → Claude plan → API key. When one hits its limit, baton hands the session to the next.
 
 ## 1. Install
 
@@ -21,7 +24,33 @@ To try it without installing: `npx github:nagasatyadheerajanumala/baton doctor`.
 
 (`npm install -g github:…` does **not** work: npm skips build dependencies for global installs from git URLs.)
 
-## 2. Get API keys
+## 2. Sign in with your subscriptions
+
+baton never sees or stores these logins. The official CLIs handle sign-in themselves, which is what Anthropic's and OpenAI's terms allow. baton just runs the CLIs.
+
+**Claude Pro/Max** (Claude Code CLI):
+
+```bash
+npm install -g @anthropic-ai/claude-code   # skip if `claude --version` works
+claude auth login                          # sign in with your Claude account
+```
+
+**ChatGPT Plus/Pro** (Codex CLI):
+
+```bash
+npm install -g @openai/codex               # or: brew install codex
+codex login                                # choose "Sign in with ChatGPT"
+```
+
+Then let baton find them:
+
+```bash
+baton init      # writes ~/.baton/config.json with every signed-in subscription (and any API keys you've set)
+```
+
+How it works: when a subscription model is active, its CLI runs the model conversation, and baton supplies the tools (file edits, shell, processes) over a private local MCP connection with the CLI's built-in tools off. Your approvals and the process pane work the same, and every step goes into baton's session log, so a switch keeps the whole history. When baton hands a session *into* a CLI, the history goes as a written transcript, since the CLIs can't accept another model's raw tool calls.
+
+## 3. API keys (optional overflow, or instead of subscriptions)
 
 ### OpenAI
 
@@ -40,7 +69,7 @@ To try it without installing: `npx github:nagasatyadheerajanumala/baton doctor`.
 - **OpenRouter** gives one key for many models: <https://openrouter.ai/settings/keys>.
 - **Ollama** runs models locally for free (no key, but weak tool calling; best as a last-resort fallback): install from <https://ollama.com/download>, then `ollama pull qwen2.5-coder:32b`.
 
-## 3. Give baton your keys
+### Give baton your keys
 
 Put keys in environment variables, not in files you might commit. For zsh (the macOS default):
 
@@ -54,7 +83,7 @@ source ~/.zshrc
 
 That's enough to start: with no config file, baton builds its chain from whichever keys it finds, OpenAI first, then Claude.
 
-## 4. Choose your failover chain (optional)
+## 4. Choose your failover chain
 
 ```bash
 baton init          # writes ~/.baton/config.json
@@ -64,18 +93,20 @@ baton init          # writes ~/.baton/config.json
 {
   "approval": "ask",
   "providers": {
-    "openai":    { "type": "openai",    "apiKeyEnv": "OPENAI_API_KEY" },
+    "chatgpt":   { "type": "codex" },
+    "claude":    { "type": "claude-code" },
     "anthropic": { "type": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" }
   },
   "chain": [
-    { "provider": "openai",    "model": "gpt-6-sol",         "contextWindow": 922000,  "maxOutputTokens": 32000 },
+    { "provider": "chatgpt",   "model": "gpt-6-astra",       "contextWindow": 922000 },
+    { "provider": "claude",    "model": "claude-opus-5-5",   "contextWindow": 1000000 },
     { "provider": "anthropic", "model": "claude-sonnet-5-5", "contextWindow": 1000000, "maxOutputTokens": 32000 }
   ]
 }
 ```
 
 - **`chain`** is the failover order. The first entry is where sessions start. To start on Claude and fall back to OpenAI, swap the two entries.
-- **`type`**: `openai` (OpenAI's Responses API), `anthropic`, or `openai-compatible` (OpenRouter, LiteLLM, Ollama, vLLM; needs a `baseURL`).
+- **`type`**: `codex` (ChatGPT plan via the Codex CLI), `claude-code` (Claude plan via the Claude Code CLI), `openai` (OpenAI API), `anthropic` (Claude API), or `openai-compatible` (OpenRouter, LiteLLM, Ollama, vLLM; needs a `baseURL`).
 - **`apiKeyEnv`** names the environment variable holding the key. An inline `apiKey` also works but is discouraged.
 - **`reasoningEffort`** (type `openai` only): `none` | `low` | `medium` | `high` | `xhigh` | `max`.
 - A `baton.config.json` in a project directory overrides `~/.baton/config.json` for that project.
@@ -101,6 +132,8 @@ For each model in the chain, doctor makes a real two-step tool call (a fraction 
 
 | doctor says | fix |
 |---|---|
+| `Claude Code isn't signed in` / `Codex isn't signed in` | run `claude auth login` / `codex login` |
+| `Your plan's usage limit is reached` | nothing to fix; baton skips it until the limit resets |
 | `no API key: X is not set` | export the variable (step 3) and open a new terminal |
 | `API key rejected` | the key is wrong, revoked, or from a different org/project; create a new one |
 | `No API credits / quota exhausted` | add credits on the billing page; a chat subscription doesn't count |

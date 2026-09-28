@@ -271,6 +271,7 @@ export function App({ agent, store, version, cwdLabel, onMouse, onExit }: AppPro
       running,
       busy: store.running,
       paneFocused: pane.focused,
+      plan: router.adapter(router.current).external === true,
     },
     cols,
   );

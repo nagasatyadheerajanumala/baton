@@ -12,6 +12,7 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 |---|---|---|---|
 | Agent loop with streaming | yes | yes | built |
 | Multiple models, `/model` picker | Claude only | OpenAI only (+ local OSS) | built, any provider |
+| Use your Claude / ChatGPT subscription | yes (own plan) | yes (own plan) | built: both, in one chain, via the official CLIs |
 | Reasoning effort control (low to max) | yes | yes | P0 (config done for OpenAI; per-turn toggle + Anthropic effort) |
 | "Think harder" keyword / per-turn effort | yes (ultrathink) | yes | P1 |
 | Auto-compaction when context fills | yes | yes | built (deterministic); P1 LLM summary pass |
@@ -148,5 +149,4 @@ Subagents, plugins, race mode, consensus checks, SDK, GitHub Action, IDE extensi
 
 ## Deliberately not doing (for now)
 
-- **Reusing Claude/ChatGPT subscription logins.** Needs a terms check with each provider first.
 - **Cloud execution.** baton is local-first; your code and processes stay on your machine.

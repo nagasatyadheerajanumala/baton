@@ -1,6 +1,7 @@
 import { type CompactResult, compact, estimateTextTokens } from '../compaction/compact.js';
 import { type Session, newMessage, touchedFiles } from '../ir/session.js';
 import { type ToolCallBlock, type ToolResultBlock, isToolCall } from '../ir/types.js';
+import { ToolBridge } from '../mcp/bridge.js';
 import type { Classified } from '../router/errors.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
 import { gitSnapshot } from '../tools/shell.js';
@@ -32,6 +33,8 @@ const SAFETY = 0.9;
 
 export class Agent {
   readonly processes: ProcessManager;
+  /** MCP server for agent CLIs (Claude Code / Codex); only created if the chain has one. */
+  readonly bridge: ToolBridge | undefined;
 
   constructor(
     readonly session: Session,
@@ -40,13 +43,34 @@ export class Agent {
     private readonly opts: AgentOptions,
   ) {
     this.processes = opts.processes ?? new ProcessManager();
+    if (router.chain.some((t) => router.adapter(t).external)) this.bridge = new ToolBridge(tools);
+  }
+
+  /** Stop the MCP bridge, if one was started. */
+  async close(): Promise<void> {
+    await this.bridge?.stop();
   }
 
   /** Run one human turn to completion: model -> tools -> model ... -> final answer. */
   async run(userText: string, events: AgentEvents = {}, signal?: AbortSignal): Promise<void> {
     this.session.push(newMessage('user', [{ type: 'text', text: userText }]));
     const maxSteps = this.opts.maxSteps ?? 50;
+    // Agent CLIs run their own loop and call baton's tools through the bridge;
+    // it records each step into this session as it happens.
+    this.bridge?.attach({
+      session: this.session,
+      events,
+      ctx: { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes },
+      producer: () => ({ provider: this.router.current.provider, model: this.router.current.model }),
+    });
+    try {
+      await this.loop(maxSteps, events, signal);
+    } finally {
+      this.bridge?.detach();
+    }
+  }
 
+  private async loop(maxSteps: number, events: AgentEvents, signal?: AbortSignal): Promise<void> {
     for (let step = 0; step < maxSteps; step++) {
       const { turn, target } = await this.router.complete(
         (t, scale) => this.prepare(t, scale, events),
@@ -61,8 +85,14 @@ export class Agent {
       );
 
       // Only complete turns reach the log (see invariants in ir/types.ts).
+      const external = this.router.adapter(target).external === true;
       this.session.push(
-        newMessage('assistant', turn.content, { provider: target.provider, model: target.model, usage: turn.usage }),
+        newMessage('assistant', turn.content, {
+          provider: target.provider,
+          model: target.model,
+          usage: turn.usage,
+          ...(external ? { subscription: true } : {}),
+        }),
       );
 
       const calls = turn.content.filter(isToolCall);
@@ -105,6 +135,7 @@ export class Agent {
       tools: this.tools.specs,
       maxTokens: target.maxOutputTokens,
       onText: events.onText,
+      bridge: this.bridge,
     };
   }
 

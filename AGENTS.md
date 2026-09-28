@@ -18,6 +18,13 @@ src/
     openai-responses.ts  Responses API for api.openai.com (stateless, encrypted reasoning replay)
     openai.ts            Chat Completions for OpenAI-compatible servers (OpenRouter, LiteLLM, Ollama)
     registry.ts          config -> adapters; MissingKeyAdapter for providers without a key
+    cli/                 subscription providers: drive the official CLIs (external agents)
+      claude-code.ts       `claude -p --output-format stream-json --tools "" --mcp-config ...`
+      codex.ts             `codex exec --json --sandbox read-only -c mcp_servers.baton...`
+      transcript.ts        IR -> text transcript for handoffs into a CLI
+      common.ts            JSONL runner, CLI error -> router error, per-session seen-tracking
+  mcp/bridge.ts  Streamable HTTP MCP server (127.0.0.1 + secret path) exposing the ToolEngine to CLIs;
+                 records every CLI step into the session
   router/      errors.ts: SDK error -> FailureKind; router.ts: retry / compact / failover policy
   compaction/  deterministic, produces a *view*; never rewrites the session log
   tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate
@@ -51,6 +58,8 @@ src/
 8. **A missing API key never crashes startup.** It becomes a `MissingKeyAdapter` that fails as `auth`, so failover skips it.
 9. **Nothing baton starts outlives it.** Processes run in their own process group and `killAll()` runs on every exit path.
 10. **Renderers return exact-width lines.** `format.ts` functions pad/truncate to the column; mouse hit-testing relies on the layout they report (`procCols`, `rowIds`, `closeCols`).
+11. **Subscriptions only through the official, unmodified CLIs.** baton never reads, stores or proxies Claude/ChatGPT login tokens (Anthropic's terms forbid it for Claude). Status checks ask the CLI (`claude auth status`, `codex login status`); never open their credential files.
+12. **External agents execute tools only through the bridge.** Claude Code runs with `--tools ""`; Codex runs read-only with baton's MCP server pre-approved. That keeps approvals, the process pane and the IR log authoritative.
 
 ## Design decisions
 
@@ -58,4 +67,4 @@ src/
 - OpenAI itself goes through the Responses API: current OpenAI reasoning models only allow function calling on Chat Completions with reasoning off. Chat Completions remains the adapter for OpenAI-compatible servers.
 - Default model ids live in `DEFAULT_MODELS` (src/config/config.ts), checked against provider docs 2026-09-28.
 - Compaction is deterministic for now (stale reads → head/tail truncation → drop middle turns with a state summary). LLM summarization can slot in as a pass between truncation and drop, and must not run on the failover path itself.
-- Subscription/OAuth auth (reusing Claude/ChatGPT plan logins) is **deliberately not implemented**; check provider terms before adding it. It would be an auth option on an existing adapter, not a new adapter.
+- Subscriptions run through the official CLIs rather than direct OAuth: permitted for Claude (unmodified Claude Code, user's own login), and for OpenAI it avoids depending on the undocumented ChatGPT Codex endpoint. Trade-off: handoffs *into* a CLI pass history as a transcript.
