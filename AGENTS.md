@@ -35,7 +35,9 @@ src/
   tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate
     processes.ts   ProcessManager: every shell command tools start; bounded output; group kill
     readonly.ts    conservative read-only shell detection (auto-approved: git status/log/diff, ls, rg...)
+    checkpoints.ts per-request file snapshots in a private git dir (~/.baton/checkpoints/<hash>.git); /undo, /rewind
   agent/       loop.ts: model -> tools -> model; handoff note on provider switch (incl. running processes)
+    instructions.ts  AGENTS.md / CLAUDE.md loading (+ @imports, dedupe) injected into every model's system prompt
   pricing.ts   list prices + session cost estimate
   ui/
     commands.ts    slash commands shared by both UIs
@@ -48,6 +50,7 @@ src/
       format.ts    pure renderers: transcript entries (shared), process pane, fullscreen chrome
       panels.ts    inline widgets: permission prompt, model picker, process box, input box, footer
       editor.ts    readline-style prompt editing (pure)
+      mentions.ts  @file picker (fuzzy) and attaching mentioned files/folders to the prompt
       mouse.ts     SGR mouse parsing; strips reports from stdin before Ink sees them
       run.tsx      picks the layout; mouse on/off and cleanup for fullscreen
   config/      baton.config.json > ~/.baton/config.json > env-derived chain; DEFAULT_MODELS
@@ -73,6 +76,9 @@ src/
 
 15. **Discovery is read-only and hermetic in tests.** baton auto-uses MCP servers from `codex mcp list --json` and ~/.claude.json at startup (never writes to Codex/Claude config; hiding one only adds it to baton's `mcpExclude`). Tests set BATON_NO_DISCOVERY via vitest.config.ts so they never touch the developer's real setup.
 14. **MCP sign-in only happens in `baton mcp login`.** Background connects use saved tokens or report `needs-login`; they must never register OAuth clients or open browsers. Tokens are stored mode 600 and never borrowed from other apps. Project `.mcp.json` is never auto-loaded (a repo could run any command); users import it explicitly.
+
+16. **Checkpoints never touch the project's own repo.** They live in a separate GIT_DIR with the project as work tree; restore uses `read-tree -u --reset` after a "before rewind" snapshot, so every rewind is itself undoable. Never snapshot a home folder or `/`.
+17. **Plan mode is enforced in the tool engine**, not by prompting alone, so it holds for every provider including the CLIs (which call tools through the bridge).
 
 ## Design decisions
 

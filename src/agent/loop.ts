@@ -57,6 +57,11 @@ export class Agent {
     }
   }
 
+  /** Tell the model something happened outside the conversation (e.g. files were rewound). */
+  addNote(text: string): void {
+    this.session.push(newMessage('user', [{ type: 'text', text: `[note from baton] ${text}` }], { synthetic: true }));
+  }
+
   get mcp(): McpManager | undefined {
     return this.opts.mcp;
   }

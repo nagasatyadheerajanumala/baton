@@ -400,3 +400,30 @@ export function renderPlanPrompt(choice: number, w: number): string[] {
   const body = ['', ...PLAN_OPTIONS.map((o, i) => (i === choice ? `${t.accent('❯')} ${t.bold(`${i + 1}. ${o}`)}` : `  ${t.muted(`${i + 1}. ${o}`)}`)), '', t.muted(`↑↓ + enter, or press 1 · 2 · 3   ${glyph.sep}   esc = keep planning`)];
   return box(t.accent(t.bold('Ready to implement this plan?')), t.muted('plan mode'), body, w, t.accent);
 }
+
+// ---- Rewind picker -------------------------------------------------------------------
+
+export function renderRewind(items: { label: string; ts: number }[], index: number, loading: boolean, w: number, now: number, ago: (ts: number, now: number) => string): string[] {
+  const body: string[] = [];
+  if (loading) body.push(t.muted('loading snapshots…'));
+  else if (!items.length) body.push(t.muted('No snapshots yet. baton takes one before each request.'));
+  items.forEach((it, i) => {
+    const sel = i === index;
+    const when = ago(it.ts, now).padEnd(11);
+    const label = it.label === 'before rewind' ? t.muted('before a rewind (undo that rewind)') : `before “${it.label}”`;
+    body.push(truncate(`${sel ? t.accent('❯') : ' '} ${t.muted(when)} ${sel ? t.bold(label) : label}`, w - 4));
+  });
+  body.push('', t.muted(`↑↓ choose ${glyph.sep} enter restore files to that point ${glyph.sep} esc cancel`));
+  return box(t.bold('Rewind files'), t.muted('snapshots taken before each request'), body, w, t.accent);
+}
+
+// ---- @file suggestions -----------------------------------------------------------------
+
+export function renderMentions(items: string[], index: number, w: number, loading: boolean): string[] {
+  if (loading) return [t.muted('  finding files…')];
+  if (!items.length) return [t.muted('  no matching files')];
+  return [
+    ...items.map((p, i) => truncate(`  ${i === index ? t.accent('❯') : ' '} ${i === index ? t.bold(p) : p}`, w)),
+    t.muted(`    tab/enter insert ${glyph.sep} esc dismiss`),
+  ];
+}

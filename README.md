@@ -13,6 +13,8 @@ Hit a rate limit or run out of quota halfway through a task, and baton hands the
 - **Deterministic context compaction.** When the next model has a smaller window, stale file reads are collapsed, old tool output is trimmed, and older turns become a state summary. The original task is always kept, and the saved session keeps full history.
 - **A terminal UI that works like Claude Code and Codex.** The transcript prints into your normal scrollback (scroll, select and search as usual), with a short output preview under every step and `Ctrl+O` for the full output. A clear permission prompt shows the whole command with numbered choices; read-only commands like `git status` or `rg` don't ask. Type follow-ups while it works and they're queued. `/model` shows every model, its account, and when a limited plan comes back. `--fullscreen` gives a split layout with a clickable process pane; `--plain` a line-based prompt.
 - **MCP servers.** The servers you've already set up in Codex and Claude Code are picked up automatically (remote ones need one sign-in inside baton). Type `/mcp` to add more from Codex and Claude Code, from popular ones (GitHub, Linear, Notion, Figma, Sentry, Playwright…), or by searching the official MCP registry; they connect immediately and remote ones sign in through your browser. Every model in the chain can use their tools, so switching providers never loses them. The same is available as `baton mcp …` commands.
+- **Your project's rules, for every model.** baton reads `AGENTS.md` and `CLAUDE.md` (project, parent folders, and your global Codex / Claude Code ones, with `@imports`), so a provider switch never loses your conventions. `/init` writes one for a new repo.
+- **Plan mode, undo and @files.** `shift+tab` into plan mode to have the model investigate and propose a plan before touching anything. Every request is snapshotted first, so `/undo` or `/rewind` puts files back (your own git history is never touched). Type `@` to attach files.
 - **Background processes.** The agent can start dev servers and watchers in the background, check their output, and stop them. After a provider switch, the new model is told what's still running.
 - **Local tool engine.** read/write/edit files, search, bash, git status. Changes require approval (or `--approval auto-edit` / `--yes`).
 - **Resumable sessions.** Every session is an append-only log in `~/.baton/sessions/`; pick up with `--continue` or `--resume <id>`.
@@ -44,7 +46,8 @@ baton never sees your subscription logins; the official CLIs handle them. [`docs
 |---|---|
 | `enter` while it's working | queue a follow-up; it's sent when the current step finishes |
 | `1` `2` `3` or `↑↓` + `enter` | answer a permission prompt (yes · yes for this session · no); `esc` = no |
-| `shift+tab` | cycle permission mode: ask · auto-approve edits · full access (shown in the footer) |
+| `shift+tab` | cycle permission mode: ask · auto-approve edits · plan mode (shown in the footer) |
+| `@` | pick a project file to attach (fuzzy search; `tab`/`enter` inserts) |
 | `^O` | print the full output of the last step |
 | `^P` | processes: `↑↓` select, live output, `k` stop, `c` clear finished, `esc` close |
 | `esc` | interrupt the current step |
@@ -60,6 +63,8 @@ With `--fullscreen`, the process pane sits on the right and is clickable (`^P` o
 | `/status` | session id, token usage and cost, switches so far, files modified |
 | `/compact` | preview what compaction would do for the current model |
 | `/mcp` | manage MCP servers without leaving the session: see status and tools, sign in, reconnect, disable or remove; add servers from Codex and Claude Code, from a list of popular ones (GitHub, Linear, Notion, Figma, Sentry…), or by searching the MCP registry. New servers connect immediately. |
+| `/undo`, `/rewind` | put files back as they were before the last (or any earlier) request |
+| `/init`, `/memory` | write an `AGENTS.md` for the project; list the instruction files every model follows |
 | `/clear` | clear the screen (the session keeps its history) |
 | `/exit` | quit; the session is saved |
 

@@ -17,7 +17,7 @@ export interface DiffLine {
 }
 
 export type Entry =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; attached?: { path: string; detail: string }[] }
   | { kind: 'assistant'; text: string; interrupted?: boolean }
   | {
       kind: 'tool';
@@ -188,6 +188,7 @@ export class TuiStore extends EventEmitter {
   /** Messages typed while the agent works; sent in order when the turn ends. */
   queue: string[] = [];
   picker = { open: false, index: 0 };
+  rewind: { open: boolean; index: number; items: { id: string; label: string; ts: number }[]; loading: boolean } = { open: false, index: 0, items: [], loading: false };
   mcpPanel: {
     open: boolean;
     cursor: number;
@@ -270,9 +271,9 @@ export class TuiStore extends EventEmitter {
     this.live = '';
   }
 
-  beginTurn(text: string): void {
+  beginTurn(text: string, attached?: { path: string; detail: string }[]): void {
     this.flushLive();
-    this.entries.push({ kind: 'user', text });
+    this.entries.push({ kind: 'user', text, ...(attached?.length ? { attached } : {}) });
     this.running = true;
     this.turnStartedAt = Date.now();
     this.scroll = 0;

@@ -72,8 +72,11 @@ function gutter(first: string, rest: string, text: string, w: number): string[] 
 export function renderEntry(e: Entry, ctx: ConversationContext): string[] {
   const w = ctx.width;
   switch (e.kind) {
-    case 'user':
-      return [...gutter(`${t.accent(glyph.prompt)} `, '  ', t.bold(e.text), w), ''];
+    case 'user': {
+      const text = t.bold(e.text.replace(/(^|\s)(@[^\s]+)/g, (_m, pre: string, at: string) => `${pre}${t.accent(at)}`));
+      const att = (e.attached ?? []).map((a, i) => `${i === 0 ? t.muted('  ⎿  attached ') : t.muted('              ')}${a.path} ${t.muted(`(${a.detail})`)}`);
+      return [...gutter(`${t.accent(glyph.prompt)} `, '  ', text, w), ...att, ''];
+    }
     case 'assistant': {
       const body = e.text.split('\n').flatMap((para, i) => gutter(i === 0 ? `${t.text(glyph.active)} ` : '  ', '  ', para, w));
       return e.interrupted ? [...body, `  ${t.muted('(cut off: the provider switched mid-answer)')}`, ''] : [...body, ''];

@@ -42,12 +42,12 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 
 | Feature | Claude Code | Codex CLI | baton |
 |---|---|---|---|
-| `@file` mentions with fuzzy picker | yes | yes | P0 |
+| `@file` mentions with fuzzy picker | yes | yes | built |
 | Image input (paste screenshot, `--image`) | yes | yes | P1 |
-| Project memory file (CLAUDE.md / AGENTS.md) | CLAUDE.md | AGENTS.md | P0: read **both**, plus nested and user-level |
-| `/init` to generate the memory file | yes | yes | P1 |
+| Project memory file (CLAUDE.md / AGENTS.md) | CLAUDE.md | AGENTS.md | built: reads both, nested and user-level, with @imports |
+| `/init` to generate the memory file | yes | yes | built |
 | `#` quick-add to memory | yes | no | P2 |
-| `!` run a shell command directly | yes | yes | P0 |
+| `!` run a shell command directly | yes | yes | built |
 | `--add-dir` extra working directories | yes | yes | P1 |
 | Web search and fetch tools | yes | yes (`--search`) | P1 |
 
@@ -58,10 +58,10 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 | Approval prompts for edits and commands | yes | yes | built |
 | Approval modes (ask / auto-edit / full) | yes | yes | built |
 | Allow/deny rules per tool and pattern (`Bash(npm test*)`) | yes | partial | partial: read-only commands auto-allowed, session-wide allow; P0 per-pattern rules |
-| Plan mode (read-only until approved) | yes | partial | P0 |
+| Plan mode (read-only until approved) | yes | partial | built (enforced for every provider) |
 | OS sandbox for commands (Seatbelt / Landlock), network off by default | yes | yes | P1 |
 | Workspace trust prompt for new folders | yes | yes | P1 |
-| Checkpoints and `/rewind` / undo | yes | yes | P0 (shadow-git snapshot per turn) |
+| Checkpoints and `/rewind` / undo | yes | yes | built (per-request snapshots, undoable rewinds) |
 | Auto mode (classifier approves safe actions) | yes | no | P2 |
 
 ### Sessions

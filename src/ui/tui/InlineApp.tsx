@@ -10,7 +10,9 @@ import { glyph, t } from '../theme.js';
 import { type EditorState, editKey, emptyEditor } from './editor.js';
 import { renderEntry, welcomeLines, wrap } from './format.js';
 import { INIT_PROMPT, loadInstructions } from '../../agent/instructions.js';
-import { type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderPlanPrompt, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
+import { Checkpoints, timeAgo } from '../../tools/checkpoints.js';
+import { acceptMention, expandMentions, fuzzyFiles, listProjectFiles, mentionAt } from './mentions.js';
+import { type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderMentions, renderPlanPrompt, renderRewind, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
 import { POPULAR, type CatalogEntry, searchRegistry } from '../../mcp/catalog.js';
 import { importCandidates, saveServer, setExcluded } from '../../mcp/cli.js';
 import { loginToServer, mcpAuthDir } from '../../mcp/client.js';
@@ -59,6 +61,21 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
   const router = agent.router;
   const running = agent.processes.runningCount;
   const [instructionLabels] = useState(() => loadInstructions(agent.session.cwd).map((f) => f.label.replace(/ \(.*\)$/, '')));
+  const [checkpoints] = useState(() => new Checkpoints(agent.session.cwd));
+  // @file mentions: project file list is loaded on first use and refreshed every 30s.
+  const files = useRef<{ list: string[]; at: number; loading: boolean }>({ list: [], at: 0, loading: false });
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionDismissedAt, setMentionDismissedAt] = useState<number | undefined>(undefined);
+  const mention = mentionAt(editor.value, editor.cursor);
+  const mentionActive = Boolean(mention) && mention!.start !== mentionDismissedAt && !store.approval && !store.picker.open && !store.mcpPanel.open && !store.rewind.open && !store.planPrompt;
+  if (mentionActive && !files.current.loading && Date.now() - files.current.at > 30_000) {
+    files.current.loading = true;
+    void listProjectFiles(agent.session.cwd).then((list) => {
+      files.current = { list, at: Date.now(), loading: false };
+      store.changed();
+    });
+  }
+  const mentionItems = mentionActive ? fuzzyFiles(files.current.list, mention!.query) : [];
   const w = Math.max(40, cols);
 
   useEffect(() => {
@@ -271,6 +288,20 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       if (text === '/model') return openPicker();
       if (text === '/mcp') return openMcp();
       if (text === '/init') return runTurn(INIT_PROMPT, '/init: write AGENTS.md for this project');
+      if (text === '/rewind' || text === '/undo') {
+        if (!checkpoints.available) return store.push({ kind: 'notice', level: 'warn', text: `Rewind isn't available here${checkpoints.disabledReason ? `: ${checkpoints.disabledReason}` : ' (snapshots are off in your home folder).'}` });
+        if (text === '/undo') {
+          void checkpoints.list(1).then((items) => (items[0] ? restoreTo(items[0]) : store.push({ kind: 'notice', level: 'info', text: 'Nothing to undo yet.' })));
+          return;
+        }
+        store.rewind = { open: true, index: 0, items: [], loading: true };
+        store.changed();
+        void checkpoints.list(30).then((items) => {
+          Object.assign(store.rewind, { items, loading: false });
+          store.changed();
+        });
+        return;
+      }
       if (text === '/clear') {
         process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
         return store.clear();
@@ -290,18 +321,40 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         void proc.done.then(() => store.push({ kind: 'output', text: t.muted(proc.tail(40) || '(no output)') }));
         return;
       }
-      runTurn(text);
+      const { prompt, attached } = expandMentions(text, agent.session.cwd);
+      runTurn(prompt, prompt === text ? undefined : text, attached);
     },
     [agent, openPicker, openMcp, requestExit, store, configFile],
   );
 
+  /** Put files back as they were at a snapshot and tell the model. */
+  async function restoreTo(cp: { id: string; label: string; ts: number }) {
+    if (store.running) return store.push({ kind: 'notice', level: 'warn', text: 'Wait for the current step to finish (or press esc) before rewinding.' });
+    try {
+      const changed = await checkpoints.restore(cp.id);
+      const what = cp.label === 'before rewind' ? 'to how they were before your last rewind' : `to before “${cp.label}” (${timeAgo(cp.ts)})`;
+      const files = changed.length ? `Changed back: ${changed.slice(0, 8).join(', ')}${changed.length > 8 ? ` and ${changed.length - 8} more` : ''}.` : 'No files needed changing.';
+      store.push({ kind: 'notice', level: 'info', text: `Restored files ${what}. ${files} Changed your mind? /rewind and pick "before a rewind".` });
+      if (changed.length) agent.addNote(`The user restored the project files ${what}. These files changed: ${changed.join(', ')}. Re-read files before relying on what you saw earlier.`);
+    } catch (err) {
+      store.push({ kind: 'notice', level: 'error', text: `Rewind failed: ${(err as Error).message}` });
+    }
+  }
+
   /** Run one request. `shown` is what the transcript displays if it differs from what the model gets. */
-  function runTurn(prompt: string, shown?: string) {
+  function runTurn(prompt: string, shown?: string, attached?: { path: string; detail: string }[]) {
       const ac = new AbortController();
       controller.current = ac;
-      store.beginTurn(shown ?? prompt);
-      agent
-        .run(prompt, store.events(), ac.signal)
+      store.beginTurn(shown ?? prompt, attached);
+      // Snapshot files first so this request's changes can be undone (/undo, /rewind).
+      checkpoints
+        .snapshot(shown ?? prompt)
+        .then((cp) => {
+          if (!cp && checkpoints.disabledReason && !store.entries.some((e) => e.kind === 'notice' && e.text.startsWith('File snapshots are off'))) {
+            store.push({ kind: 'notice', level: 'warn', text: `File snapshots are off for this folder (${checkpoints.disabledReason}); /undo won't be available.` });
+          }
+        })
+        .then(() => agent.run(prompt, store.events(), ac.signal))
         .then(() => {
           store.endTurn();
           // A finished plan-mode turn ends with the question: implement it?
@@ -359,6 +412,20 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         choose(2);
         controller.current?.abort();
         return;
+      }
+      return store.changed();
+    }
+
+    // Rewind picker
+    if (store.rewind.open) {
+      const rw = store.rewind;
+      const n = Math.max(1, rw.items.length);
+      if (key.upArrow) rw.index = (rw.index + n - 1) % n;
+      else if (key.downArrow) rw.index = (rw.index + 1) % n;
+      else if (key.escape || (key.ctrl && input === 'c')) rw.open = false;
+      else if (key.return && rw.items[rw.index]) {
+        rw.open = false;
+        void restoreTo(rw.items[rw.index]!);
       }
       return store.changed();
     }
@@ -478,6 +545,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       return;
     }
     if (key.escape) {
+      if (mentionActive) return setMentionDismissedAt(mention!.start);
       if (controller.current) controller.current.abort();
       return;
     }
@@ -492,8 +560,22 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       return store.clear();
     }
 
+    // @file suggestions take the arrow keys, tab and enter while they're showing.
+    if (mentionActive && mentionItems.length) {
+      if (key.upArrow) return setMentionIndex((i) => (i + mentionItems.length - 1) % mentionItems.length);
+      if (key.downArrow) return setMentionIndex((i) => (i + 1) % mentionItems.length);
+      if (key.tab || key.return) {
+        const next = acceptMention(editor.value, editor.cursor, mentionItems[Math.min(mentionIndex, mentionItems.length - 1)]!);
+        setEditor((s) => ({ ...s, ...next }));
+        setMentionIndex(0);
+        return;
+      }
+      if (key.escape) return setMentionDismissedAt(mention!.start);
+    }
+
     const r = editKey(editor, input, key);
     setEditor(r.state);
+    if (mentionIndex) setMentionIndex(0);
     if (!r.submit) return;
     // While working, plain messages queue up; commands like /model still act immediately.
     if (store.running && !r.submit.startsWith('/')) store.enqueue(r.submit);
@@ -532,7 +614,9 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
   );
 
   let panel: string[];
-  if (store.planPrompt) {
+  if (store.rewind.open) {
+    panel = renderRewind(store.rewind.items, store.rewind.index, store.rewind.loading, w - 1, now, timeAgo);
+  } else if (store.planPrompt) {
     panel = renderPlanPrompt(store.planPrompt.choice, w - 1);
   } else if (store.approval) {
     panel = renderApproval({ ...store.approval, choice: store.approvalChoice, cwd: agent.session.cwd, cwdLabel: tildify(agent.session.cwd), mode: store.approvalMode }, w - 1);
@@ -548,6 +632,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     panel = renderInputBox(editor.value, editor.cursor, { width: w - 1, placeholder, busy: store.running });
   }
 
+  const mentionLines = mentionActive ? renderMentions(mentionItems, Math.min(mentionIndex, Math.max(0, mentionItems.length - 1)), w - 1, files.current.loading && !files.current.list.length) : [];
   const slashHint =
     !store.approval && !store.picker.open && !store.mcpPanel.open && !procs.open && editor.value.startsWith('/') && !editor.value.includes(' ')
       ? t.muted(`  ${['/model', '/mcp', '/init', '/memory', '/rewind', '/undo', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
@@ -563,7 +648,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         {store.running && !store.approval && <Text>{renderWorking({ spinner, elapsedMs: now - store.turnStartedAt, width: w - 1, queued: store.queue.length })}</Text>}
         {store.queue.length > 0 && <Text>{renderQueue(store.queue, w - 1).join('\n')}</Text>}
         <Text>{panel.join('\n')}</Text>
-        {slashHint ? <Text>{slashHint}</Text> : <Text>{footer}</Text>}
+        {mentionLines.length > 0 ? <Text>{mentionLines.join('\n')}</Text> : slashHint ? <Text>{slashHint}</Text> : <Text>{footer}</Text>}
       </Box>
     </>
   );
