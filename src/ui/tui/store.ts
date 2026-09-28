@@ -96,8 +96,19 @@ const VERBS: Record<string, string> = {
   git_status: 'git',
 };
 
+/** mcp__linear__create_issue -> { server: 'linear', tool: 'create_issue' } */
+export function mcpParts(name: string): { server: string; tool: string } | undefined {
+  const m = /^mcp__(.+?)__(.+)$/.exec(name);
+  return m ? { server: m[1]!, tool: m[2]! } : undefined;
+}
+
 export function toolLabel(call: ToolCallBlock): { verb: string; detail: string } {
   const i = call.input;
+  const mcp = mcpParts(call.name);
+  if (mcp) {
+    const args = Object.entries(i).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
+    return { verb: `${mcp.server}.${mcp.tool}`, detail: args };
+  }
   const verb = VERBS[call.name] ?? call.name;
   switch (call.name) {
     case 'read_file':

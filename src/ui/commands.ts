@@ -17,6 +17,7 @@ export const c = {
 
 export const HELP = `Commands:
   /model [name|index]  show the failover chain, or switch to a model manually
+  /mcp                 MCP servers and their tools
   /status              session, token and cost info
   /compact [tokens]    preview what compaction would do for the current model
   /clear               clear the screen (history is kept)
@@ -104,6 +105,21 @@ export function runCommand(input: string, agent: Agent, opts: { configFile?: str
         if (i < router.chain.length - 1) lines.push('');
       });
       lines.push('', c.dim('Switch with /model <name>, e.g. /model claude-sonnet-5-5'));
+      return { output: lines.join('\n') };
+    }
+    case 'mcp': {
+      const servers = agent.mcp?.servers ?? [];
+      if (!servers.length) return { output: `No MCP servers configured. Outside baton, run ${c.bold('baton mcp import')} or ${c.bold('baton mcp add')}.` };
+      const lines = servers.map((s) => {
+        const status =
+          s.status === 'connected' ? c.green(`connected · ${s.tools.length} tools`)
+          : s.status === 'connecting' ? c.dim('connecting…')
+          : s.status === 'needs-login' ? c.yellow(`needs sign-in: run baton mcp login ${s.name}`)
+          : s.status === 'disabled' ? c.dim('disabled')
+          : c.red(`failed: ${s.error ?? ''}`);
+        const tools = s.status === 'connected' ? `\n    ${c.dim(s.tools.map((t) => t.name).join(', ').slice(0, 300))}` : '';
+        return `${s.status === 'connected' ? c.green('●') : c.yellow('●')} ${c.bold(s.name)}  ${status}${tools}`;
+      });
       return { output: lines.join('\n') };
     }
     case 'status': {

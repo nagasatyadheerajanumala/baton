@@ -8,6 +8,14 @@ if (args[0] === 'login' && args[1] === 'status') {
   process.stderr.write('Logged in using ChatGPT\n'); // the real CLI reports status on stderr
   process.exit(0);
 }
+if (args[0] === 'mcp' && args[1] === 'list' && args.includes('--json')) {
+  out([
+    { name: 'playwright', enabled: true, transport: { type: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env: {}, env_vars: [] } },
+    { name: 'linear', enabled: true, transport: { type: 'streamable_http', url: 'https://mcp.linear.app/mcp' } },
+    { name: 'node_repl', enabled: true, transport: { type: 'stdio', command: '/Users/x/.codex/bin/node_repl', args: [] } },
+  ]);
+  process.exit(0);
+}
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d));
 process.stdin.on('end', async () => {

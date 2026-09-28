@@ -26,6 +26,9 @@ src/
       common.ts            JSONL runner, CLI error -> router error, per-session seen-tracking
   mcp/bridge.ts  Streamable HTTP MCP server (127.0.0.1 + secret path) exposing the ToolEngine to CLIs;
                  records every CLI step into the session
+  mcp/client.ts  MCP *client*: connects configured servers (stdio/http/sse), exposes their tools as
+                 mcp__server__tool to every model; OAuth via `baton mcp login` (FileOAuthProvider)
+  mcp/cli.ts     `baton mcp list|add|remove|import|login|logout`; import asks `codex mcp list --json`
   router/      errors.ts: SDK error -> FailureKind; router.ts: retry / compact / failover policy
   compaction/  deterministic, produces a *view*; never rewrites the session log
   tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate
@@ -66,6 +69,8 @@ src/
 11. **Subscriptions only through the official, unmodified CLIs.** baton never reads, stores or proxies Claude/ChatGPT login tokens (Anthropic's terms forbid it for Claude). Status checks ask the CLI (`claude auth status`, `codex login status`); never open their credential files.
 12. **External agents execute tools only through the bridge.** Claude Code runs with `--tools ""`; Codex runs read-only with baton's MCP server pre-approved. That keeps approvals, the process pane and the IR log authoritative.
 13. **Permission prompts answer only to numbers, arrows+enter and esc.** Never letters: text typed mid-sentence as a prompt appears must not approve anything. Read-only detection (readonly.ts) must stay conservative; when unsure, ask.
+
+14. **MCP sign-in only happens in `baton mcp login`.** Background connects use saved tokens or report `needs-login`; they must never register OAuth clients or open browsers. Tokens are stored mode 600 and never borrowed from other apps. Project `.mcp.json` is never auto-loaded (a repo could run any command); users import it explicitly.
 
 ## Design decisions
 

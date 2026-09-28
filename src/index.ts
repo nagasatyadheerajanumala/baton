@@ -5,6 +5,8 @@ import { parseArgs } from 'node:util';
 import { Agent } from './agent/loop.js';
 import { type ApprovalMode, configPaths, loadConfig, starterConfig, toTargets } from './config/config.js';
 import { runDoctor } from './doctor.js';
+import { runMcpCommand } from './mcp/cli.js';
+import { McpManager } from './mcp/client.js';
 import { Session } from './ir/session.js';
 import { MissingKeyAdapter, buildAdapters } from './providers/registry.js';
 import { Router, targetLabel } from './router/router.js';
@@ -23,6 +25,7 @@ Usage:
   baton --resume <id>        resume a specific session
   baton doctor               verify every model in the chain with a real tool call
   baton init                 write a starter ~/.baton/config.json
+  baton mcp                  connect MCP servers (list, add, import, login)
 
 Options:
   -m, --model <name>         start on this chain entry (label, model id, or index)
@@ -64,6 +67,7 @@ async function main(): Promise<number> {
   }
 
   const cwd = process.cwd();
+  if (positionals[0] === 'mcp') return runMcpCommand(process.argv.slice(process.argv.indexOf('mcp') + 1), cwd);
 
   if (positionals[0] === 'init') {
     const target = configPaths(cwd)[1]!;
@@ -112,13 +116,22 @@ async function main(): Promise<number> {
   const oneShot = values.print !== undefined || !process.stdin.isTTY;
   const processes = new ProcessManager();
   process.once('exit', () => processes.killAll());
+  const mcp = config.mcpServers && Object.keys(config.mcpServers).length ? new McpManager(config.mcpServers, session.cwd) : undefined;
+  const mcpSummary = () => {
+    const s = mcp?.servers ?? [];
+    const ok = s.filter((x) => x.status === 'connected');
+    const bad = s.filter((x) => x.status === 'failed' || x.status === 'needs-login');
+    const tools = ok.reduce((n, x) => n + x.tools.length, 0);
+    return `MCP: ${ok.length} server${ok.length === 1 ? '' : 's'} connected (${tools} tools)${bad.length ? `; ${bad.map((b) => `${b.name} ${b.status === 'needs-login' ? 'needs sign-in' : 'failed'}`).join(', ')} (see /mcp)` : ''}`;
+  };
 
   if (oneShot) {
     if (!prompt) {
       console.error('Nothing to do: pass a prompt with -p.');
       return 1;
     }
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => undefined) });
+    await mcp?.connectAll();
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => undefined) });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
     await agent.run(prompt, terminalEvents(), controller.signal).finally(() => agent.close());
@@ -134,7 +147,9 @@ async function main(): Promise<number> {
     const { TuiStore } = await import('./ui/tui/store.js');
     const { runTui } = await import('./ui/tui/run.js');
     const store = new TuiStore(session.cwd, approval);
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: store.approve });
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve });
+    // Servers connect in the background; tools appear as each one is ready.
+    void mcp?.connectAll().then(() => store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status !== 'connected' && s.status !== 'disabled') ? 'warn' : 'info', text: mcpSummary() }));
     await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline', configFile: existsSync(source) ? source : undefined });
     await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);
@@ -142,7 +157,9 @@ async function main(): Promise<number> {
   }
 
   const rl = createRl();
-  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => rl) });
+  await mcp?.connectAll();
+  if (mcp) console.log(mcpSummary());
+  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => rl) });
   await runRepl(agent, rl, source);
   rl.close();
   await agent.close();

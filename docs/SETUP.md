@@ -113,7 +113,28 @@ baton init          # writes ~/.baton/config.json
 
 See [`baton.config.example.json`](../baton.config.example.json) for all four provider kinds. Model ids were current as of September 2026; if one is retired, `baton doctor` lists the ids your key can use.
 
-## 5. Verify
+## 5. MCP servers (optional)
+
+MCP servers give every model extra tools (a browser, your issue tracker, design files…). Tools work with every model in your chain, and each call goes through baton's permission prompt unless the server marks the tool read-only.
+
+```bash
+baton mcp import                        # lists servers already set up in Codex and Claude Code
+baton mcp import playwright linear      # copy the ones you want (or --all)
+baton mcp login linear                  # remote servers: sign in once in your browser
+baton mcp list                          # check they connect
+```
+
+Or add your own:
+
+```bash
+baton mcp add playwright -- npx @playwright/mcp@latest
+baton mcp add linear --url https://mcp.linear.app/mcp
+baton mcp add internal --url https://mcp.example.com/mcp --bearer-env INTERNAL_MCP_TOKEN
+```
+
+They're stored under `mcpServers` in your config, in the same format as Claude Code's `.mcp.json`. Sign-in tokens live in `~/.baton/mcp-auth/` (readable only by you); baton never reuses Codex's or Claude Code's tokens. A project's `.mcp.json` is never loaded automatically, since a repo could point it at any command; import it on purpose with `baton mcp import`.
+
+## 6. Verify
 
 ```bash
 baton doctor
@@ -140,7 +161,7 @@ For each model in the chain, doctor makes a real two-step tool call (a fraction 
 | `Model "…" not available` | change `model` in your config to one of the ids doctor lists |
 | `Could not reach …` | network/proxy issue, or for Ollama: run `ollama serve` |
 
-## 6. Use it
+## 7. Use it
 
 ```bash
 cd your-project

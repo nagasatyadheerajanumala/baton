@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { McpServerConfig } from '../mcp/client.js';
 import type { Price } from '../pricing.js';
 import { codexModels, modelCatalog } from './models.js';
 import type { Target } from '../router/router.js';
@@ -43,6 +44,8 @@ export type ApprovalMode = 'ask' | 'auto-edit' | 'yolo';
 
 export interface Config {
   providers: Record<string, ProviderConfig>;
+  /** MCP servers whose tools every model can use (same shape as Claude Code's .mcp.json). */
+  mcpServers?: Record<string, McpServerConfig>;
   /** Failover order. The first entry is the starting model. */
   chain: TargetConfig[];
   approval?: ApprovalMode;

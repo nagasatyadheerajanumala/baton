@@ -2,6 +2,7 @@ import { type CompactResult, compact, estimateTextTokens } from '../compaction/c
 import { type Session, newMessage, touchedFiles } from '../ir/session.js';
 import { type ToolCallBlock, type ToolResultBlock, isToolCall } from '../ir/types.js';
 import { ToolBridge } from '../mcp/bridge.js';
+import type { McpManager } from '../mcp/client.js';
 import type { Classified } from '../router/errors.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
 import { gitSnapshot } from '../tools/shell.js';
@@ -24,6 +25,8 @@ export interface AgentOptions {
   approve: (summary: string, call?: ToolCallBlock) => Promise<boolean>;
   /** Shared with the UI; a private one is created if omitted. */
   processes?: ProcessManager;
+  /** MCP servers; their tools are added to the tool engine as they connect. */
+  mcp?: McpManager;
   /** Hard stop on runaway tool loops. */
   maxSteps?: number;
 }
@@ -44,11 +47,21 @@ export class Agent {
   ) {
     this.processes = opts.processes ?? new ProcessManager();
     if (router.chain.some((t) => router.adapter(t).external)) this.bridge = new ToolBridge(tools);
+    const mcp = opts.mcp;
+    if (mcp) {
+      tools.setMcpTools(mcp.tools());
+      mcp.on('change', () => tools.setMcpTools(mcp.tools()));
+    }
   }
 
-  /** Stop the MCP bridge, if one was started. */
+  get mcp(): McpManager | undefined {
+    return this.opts.mcp;
+  }
+
+  /** Stop the MCP bridge and disconnect MCP servers. */
   async close(): Promise<void> {
     await this.bridge?.stop();
+    await this.opts.mcp?.close();
   }
 
   /** Run one human turn to completion: model -> tools -> model ... -> final answer. */

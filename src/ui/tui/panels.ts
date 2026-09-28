@@ -116,6 +116,12 @@ export function renderApproval(v: ApprovalView, w: number): string[] {
     const n = content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
     title = `Write ${String(call.input.path)} (${n} line${n === 1 ? '' : 's'})?`;
     push(content.split('\n').slice(0, 8).map((l) => t.muted(l)));
+  } else if (call && /^mcp__/.test(call.name)) {
+    const [, server, tool] = /^mcp__(.+?)__(.+)$/.exec(call.name) ?? [];
+    title = `Use ${server} · ${tool}?`;
+    const json = JSON.stringify(call.input, null, 2).split('\n');
+    push(json.length > 1 ? json.slice(1, -1).map((l) => l.replace(/^ {2}/, '')) : ['(no arguments)']);
+    body.push(t.muted(`  MCP server "${server}"`));
   } else {
     body.push(`  ${v.summary}`);
   }

@@ -33,6 +33,12 @@ export class ToolEngine {
     return [...this.tools.values()].map((t) => t.spec);
   }
 
+  /** Replace the MCP-provided tools (servers connect in the background and can change). */
+  setMcpTools(tools: Tool[]): void {
+    for (const name of [...this.tools.keys()]) if (name.startsWith('mcp__')) this.tools.delete(name);
+    for (const t of tools) this.tools.set(t.spec.name, t);
+  }
+
   describe(call: ToolCallBlock): string {
     return this.tools.get(call.name)?.describe(call.input) ?? call.name;
   }
