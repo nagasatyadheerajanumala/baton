@@ -116,7 +116,9 @@ async function main(): Promise<number> {
   const oneShot = values.print !== undefined || !process.stdin.isTTY;
   const processes = new ProcessManager();
   process.once('exit', () => processes.killAll());
-  const mcp = config.mcpServers && Object.keys(config.mcpServers).length ? new McpManager(config.mcpServers, session.cwd) : undefined;
+  const hasMcp = Boolean(config.mcpServers && Object.keys(config.mcpServers).length);
+  // Interactive sessions always get a manager so /mcp can add servers on the fly.
+  const mcp = hasMcp || (!oneShot && !values.plain) ? new McpManager(config.mcpServers ?? {}, session.cwd) : undefined;
   const mcpSummary = () => {
     const s = mcp?.servers ?? [];
     const ok = s.filter((x) => x.status === 'connected');
@@ -149,7 +151,7 @@ async function main(): Promise<number> {
     const store = new TuiStore(session.cwd, approval);
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve });
     // Servers connect in the background; tools appear as each one is ready.
-    void mcp?.connectAll().then(() => store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status !== 'connected' && s.status !== 'disabled') ? 'warn' : 'info', text: mcpSummary() }));
+    if (hasMcp) void mcp?.connectAll().then(() => store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status !== 'connected' && s.status !== 'disabled') ? 'warn' : 'info', text: mcpSummary() }));
     await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline', configFile: existsSync(source) ? source : undefined });
     await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);

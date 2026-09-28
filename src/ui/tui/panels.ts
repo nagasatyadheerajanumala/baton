@@ -1,4 +1,5 @@
 import type { ToolCallBlock } from '../../ir/types.js';
+import type { CatalogEntry } from '../../mcp/catalog.js';
 import type { ProcessManager } from '../../tools/processes.js';
 import { formatDuration } from '../../tools/processes.js';
 import { unwrapShell } from '../../tools/readonly.js';
@@ -263,4 +264,129 @@ export function renderFooter(f: FooterInfo, w: number): string {
     return justify(left, `${modeColor(`⏵ ${f.mode === 'ask' ? 'ask' : f.mode === 'auto-edit' ? 'auto-edit' : 'full access'}`)}${procs} `, w);
   }
   return justify(left, right, w);
+}
+
+// ---- MCP panel ------------------------------------------------------------------------
+
+export type McpRow =
+  | { kind: 'server'; name: string; status: 'connecting' | 'connected' | 'needs-login' | 'failed' | 'disabled'; error?: string; tools: number; where: string }
+  | { kind: 'candidate'; entry: CatalogEntry };
+
+export interface McpSection {
+  title: string;
+  rows: McpRow[];
+  /** Shown when the section has no rows. */
+  empty?: string;
+}
+
+export interface McpMenu {
+  server: string;
+  options: string[];
+  index: number;
+  /** Tool names, when "View tools" is open. */
+  tools?: string[];
+}
+
+export interface McpPanelView {
+  query: string;
+  searching: boolean;
+  searchError?: string;
+  sections: McpSection[];
+  cursor: number;
+  busy?: string;
+  menu?: McpMenu;
+}
+
+/** Selectable rows in display order. */
+export function mcpRows(sections: McpSection[]): McpRow[] {
+  return sections.flatMap((s) => s.rows);
+}
+
+export function serverMenuOptions(status: string): string[] {
+  switch (status) {
+    case 'connected':
+      return ['View tools', 'Reconnect', 'Disable', 'Remove'];
+    case 'needs-login':
+      return ['Sign in', 'Disable', 'Remove'];
+    case 'disabled':
+      return ['Enable', 'Remove'];
+    case 'connecting':
+      return ['Remove'];
+    default:
+      return ['Retry', 'Disable', 'Remove'];
+  }
+}
+
+function serverStatus(r: Extract<McpRow, { kind: 'server' }>): string {
+  switch (r.status) {
+    case 'connected':
+      return t.success(`connected · ${r.tools} tool${r.tools === 1 ? '' : 's'}`);
+    case 'connecting':
+      return t.muted('connecting…');
+    case 'needs-login':
+      return t.warning('needs sign-in · enter to sign in');
+    case 'disabled':
+      return t.muted('disabled');
+    default:
+      return t.danger(`failed: ${r.error ?? ''}`);
+  }
+}
+
+export function renderMcpPanel(v: McpPanelView, w: number, maxBody: number): string[] {
+  const inner = w - 4;
+  const head: string[] = [];
+  head.push(`${t.accent('⌕')} ${v.query ? t.bold(v.query) : t.muted('Type to search the MCP registry…')}${t.inverse(' ')}${v.searching ? t.muted('  searching…') : ''}`);
+  if (v.searchError) head.push(t.danger(`  registry search failed: ${v.searchError}`));
+  if (v.busy) head.push(t.warning(`  ${v.busy}`));
+  head.push('');
+
+  let body: string[] = [];
+  let cursorLine = 0;
+  if (v.menu) {
+    const m = v.menu;
+    body.push(t.bold(m.server));
+    if (m.tools) {
+      body.push(...(m.tools.length ? m.tools.map((tool) => `  ${t.muted('·')} ${tool}`) : [t.muted('  (no tools)')]));
+      body.push('', t.muted('esc back'));
+    } else {
+      m.options.forEach((o, i) => body.push(`${i === m.index ? t.accent('❯') : ' '} ${i === m.index ? t.bold(o) : o}`));
+      body.push('', t.muted(`↑↓ choose ${glyph.sep} enter ${glyph.sep} esc back`));
+      cursorLine = 1 + m.index;
+    }
+  } else {
+    let n = 0;
+    const idw = Math.min(22, Math.max(10, ...mcpRows(v.sections).map((r) => (r.kind === 'server' ? r.name : r.entry.name).length)) + 2);
+    for (const s of v.sections) {
+      if (!s.rows.length && !s.empty) continue;
+      if (body.length) body.push('');
+      body.push(t.muted(s.title));
+      if (!s.rows.length) body.push(t.muted(`  ${s.empty}`));
+      for (const r of s.rows) {
+        const sel = n === v.cursor;
+        if (sel) cursorLine = body.length;
+        const pointer = sel ? t.accent('❯') : ' ';
+        if (r.kind === 'server') {
+          const dot = r.status === 'connected' ? t.success(glyph.active) : r.status === 'failed' ? t.danger(glyph.active) : r.status === 'disabled' ? t.muted(glyph.idle) : t.warning(glyph.active);
+          body.push(truncate(`${pointer} ${dot} ${sel ? t.bold(r.name.padEnd(idw)) : r.name.padEnd(idw)}${serverStatus(r)}`, inner));
+        } else {
+          const e = r.entry;
+          const kind = e.config.url ? 'remote' : 'local';
+          const tags = [e.origin === 'popular' || e.origin === 'registry' ? '' : e.origin, kind, e.needsEnv?.length ? `needs ${e.needsEnv.join(', ')}` : '', e.builtIn ? 'Codex built-in' : ''].filter(Boolean).join(' · ');
+          body.push(truncate(`${pointer} ${t.accent('+')} ${sel ? t.bold(e.name.padEnd(idw)) : e.name.padEnd(idw)}${t.muted(`${e.description}${e.description ? '  ' : ''}(${tags})`)}`, inner));
+        }
+        n++;
+      }
+    }
+    body.push('', t.muted(`↑↓ move ${glyph.sep} enter add / manage ${glyph.sep} type to search ${glyph.sep} esc ${v.query ? 'clear search' : 'close'}`));
+  }
+
+  // Keep the selected row visible when the list is taller than the space.
+  const room = Math.max(6, maxBody - head.length);
+  if (body.length > room) {
+    const start = Math.min(Math.max(0, cursorLine - Math.floor(room / 2)), body.length - room);
+    const footer = body[body.length - 1]!;
+    body = body.slice(start, start + room - 1);
+    body.push(footer);
+  }
+  return box(t.bold('MCP servers'), t.muted('tools work with every model in your chain'), [...head, ...body], w, t.accent);
 }

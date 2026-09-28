@@ -9,7 +9,10 @@ import { accountLabel, pricingOverrides, runCommand, targetState } from '../comm
 import { glyph, t } from '../theme.js';
 import { type EditorState, editKey, emptyEditor } from './editor.js';
 import { renderEntry, welcomeLines, wrap } from './format.js';
-import { type PickerAccount, approvalOptions, pickerItems, renderApproval, renderFooter, renderInputBox, renderModelPicker, renderProcBox, renderQueue, renderWorking } from './panels.js';
+import { type McpRow, type McpSection, type PickerAccount, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
+import { POPULAR, type CatalogEntry, searchRegistry } from '../../mcp/catalog.js';
+import { importCandidates, saveServer } from '../../mcp/cli.js';
+import { loginToServer, mcpAuthDir } from '../../mcp/client.js';
 import { saveModelChoice } from '../../config/config.js';
 import type { Entry, TuiStore } from './store.js';
 
@@ -102,10 +105,165 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     store.changed();
   }, [accounts, router, store]);
 
+  // ---- MCP panel ------------------------------------------------------------------
+  const mcp = agent.mcp;
+  const searchTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+  const searchAbort = useRef<AbortController | undefined>(undefined);
+
+  const mcpSections = useCallback((): McpSection[] => {
+    const p = store.mcpPanel;
+    const servers = mcp?.servers ?? [];
+    const have = new Set(servers.flatMap((s) => [s.name, s.config.url ?? '', `${s.config.command ?? ''} ${(s.config.args ?? []).join(' ')}`.trim()]).filter(Boolean));
+    const fresh = (e: CatalogEntry) => !have.has(e.name) && !have.has(e.config.url ?? '\0') && !have.has(`${e.config.command ?? ''} ${(e.config.args ?? []).join(' ')}`.trim() || '\0');
+    const q = p.query.trim().toLowerCase();
+    const yours: McpRow[] = servers
+      .filter((s) => !q || s.name.toLowerCase().includes(q))
+      .map((s) => ({ kind: 'server', name: s.name, status: s.status, error: s.error, tools: s.tools.length, where: s.config.url ?? s.config.command ?? '' }));
+    if (q) {
+      const local = [...p.imports, ...POPULAR].filter((e) => fresh(e) && (e.name.includes(q) || e.description.toLowerCase().includes(q)));
+      const seen = new Set(local.map((e) => e.name));
+      return [
+        { title: 'Your servers', rows: yours },
+        { title: 'Matches', rows: local.map((entry) => ({ kind: 'candidate' as const, entry })) },
+        { title: 'MCP registry', rows: p.results.filter((e) => fresh(e) && !seen.has(e.name)).map((entry) => ({ kind: 'candidate' as const, entry })), empty: p.searching ? 'searching…' : 'no results' },
+      ];
+    }
+    // Servers that only run inside Codex go last; the useful ones first.
+    const importRows = p.imports.filter(fresh).sort((a, b) => Number(Boolean(a.builtIn)) - Number(Boolean(b.builtIn)));
+    const importNames = new Set(importRows.map((e) => e.name));
+    return [
+      { title: 'Your servers', rows: yours, empty: 'None yet. Pick one below, or type to search.' },
+      { title: 'From Codex and Claude Code', rows: importRows.map((entry) => ({ kind: 'candidate' as const, entry })) },
+      { title: 'Popular', rows: POPULAR.filter((e) => fresh(e) && !importNames.has(e.name)).map((entry) => ({ kind: 'candidate' as const, entry })) },
+    ];
+  }, [mcp, store]);
+
+  const openMcp = useCallback(() => {
+    const imports: CatalogEntry[] = importCandidates(agent.session.cwd).map((c) => ({
+      name: c.name,
+      description: '',
+      config: c.config,
+      origin: c.source,
+      builtIn: c.builtIn,
+    }));
+    store.mcpPanel = { open: true, cursor: 0, query: '', results: [], searching: false, imports };
+    store.changed();
+  }, [agent.session.cwd, store]);
+
+  const runSearch = useCallback(
+    (q: string) => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+      searchAbort.current?.abort();
+      if (!q.trim()) {
+        store.mcpPanel.results = [];
+        store.mcpPanel.searching = false;
+        return store.changed();
+      }
+      store.mcpPanel.searching = true;
+      searchTimer.current = setTimeout(() => {
+        const ac = new AbortController();
+        searchAbort.current = ac;
+        searchRegistry(q, { signal: ac.signal })
+          .then((results) => {
+            if (ac.signal.aborted) return;
+            Object.assign(store.mcpPanel, { results, searching: false, error: undefined });
+            store.changed();
+          })
+          .catch((err: Error) => {
+            if (ac.signal.aborted) return;
+            Object.assign(store.mcpPanel, { searching: false, error: err.message });
+            store.changed();
+          });
+      }, 350);
+      store.changed();
+    },
+    [store],
+  );
+
+  const signIn = useCallback(
+    async (name: string) => {
+      const state = mcp?.servers.find((s) => s.name === name);
+      if (!mcp || !state) return;
+      store.mcpPanel.busy = `Signing in to ${name}: finish in your browser…`;
+      store.changed();
+      try {
+        const ok = await loginToServer(name, state.config, agent.session.cwd, (line) => {
+          const url = /https?:\/\/\S+/.exec(line)?.[0];
+          if (url) store.push({ kind: 'notice', level: 'info', text: `Sign in to ${name} in your browser. If it didn't open: ${url}` });
+        }, mcpAuthDir());
+        const after = await mcp.connect(name);
+        store.push({ kind: 'notice', level: after.status === 'connected' ? 'info' : 'warn', text: ok && after.status === 'connected' ? `Signed in to ${name}: ${after.tools.length} tools ready for every model.` : `${name}: ${after.error ?? after.status}` });
+      } catch (err) {
+        store.push({ kind: 'notice', level: 'error', text: `Sign-in to ${name} failed: ${(err as Error).message}` });
+      } finally {
+        store.mcpPanel.busy = undefined;
+        store.changed();
+      }
+    },
+    [agent.session.cwd, mcp, store],
+  );
+
+  const addServer = useCallback(
+    async (entry: CatalogEntry) => {
+      if (!mcp) return;
+      let name = entry.name;
+      for (let i = 2; mcp.servers.some((s) => s.name === name); i++) name = `${entry.name}-${i}`;
+      const config = { ...entry.config };
+      const file = saveServer(agent.session.cwd, name, config);
+      mcp.add(name, config);
+      store.mcpPanel.busy = `Connecting to ${name}…`;
+      store.changed();
+      const state = await mcp.connect(name);
+      store.mcpPanel.busy = undefined;
+      const missingEnv = (entry.needsEnv ?? []).filter((e) => !process.env[e]);
+      if (state.status === 'connected') store.push({ kind: 'notice', level: 'info', text: `Added ${name}: ${state.tools.length} tools ready for every model. (saved to ${file.replace(process.env.HOME ?? '~', '~')})` });
+      else if (state.status === 'needs-login') {
+        store.push({ kind: 'notice', level: 'info', text: `Added ${name}. It needs a one-time sign-in; opening your browser…` });
+        void signIn(name);
+      } else if (missingEnv.length) store.push({ kind: 'notice', level: 'warn', text: `Added ${name}, but it needs ${missingEnv.join(', ')} set in your environment (e.g. in ~/.zshrc). Then choose Retry in /mcp.` });
+      else store.push({ kind: 'notice', level: 'warn', text: `Added ${name}, but it couldn't connect: ${state.error ?? state.status}. Choose Retry in /mcp once it's fixed.` });
+      store.changed();
+    },
+    [agent.session.cwd, mcp, signIn, store],
+  );
+
+  const serverAction = useCallback(
+    async (name: string, option: string) => {
+      if (!mcp) return;
+      const p = store.mcpPanel;
+      const state = mcp.servers.find((s) => s.name === name);
+      if (!state) return;
+      if (option === 'View tools') {
+        p.menu = { server: name, options: [], index: 0, tools: state.tools.map((tl) => `${tl.name}${tl.readOnly ? t.muted('  read-only') : ''}`) };
+        return store.changed();
+      }
+      p.menu = undefined;
+      if (option === 'Sign in') return void signIn(name);
+      if (option === 'Remove') {
+        await mcp.remove(name);
+        saveServer(agent.session.cwd, name, undefined);
+        store.push({ kind: 'notice', level: 'info', text: `Removed ${name}.` });
+      } else if (option === 'Disable' || option === 'Enable') {
+        const s = await mcp.setEnabled(name, option === 'Enable');
+        if (s) saveServer(agent.session.cwd, name, s.config);
+      } else if (option === 'Reconnect' || option === 'Retry') {
+        p.busy = `Connecting to ${name}…`;
+        store.changed();
+        const s = await mcp.connect(name);
+        p.busy = undefined;
+        if (s.status === 'needs-login') void signIn(name);
+      }
+      p.cursor = Math.min(p.cursor, Math.max(0, mcpRows(mcpSections()).length - 1));
+      store.changed();
+    },
+    [agent.session.cwd, mcp, mcpSections, signIn, store],
+  );
+
   const submit = useCallback(
     (text: string) => {
       setExitArmed(false);
       if (text === '/model') return openPicker();
+      if (text === '/mcp') return openMcp();
       if (text === '/clear') {
         process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
         return store.clear();
@@ -140,7 +298,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
           if (controller.current === ac) controller.current = null;
         });
     },
-    [agent, openPicker, requestExit, store, configFile],
+    [agent, openPicker, openMcp, requestExit, store, configFile],
   );
 
   // Send queued follow-ups once the current turn is done.
@@ -182,6 +340,45 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         choose(2);
         controller.current?.abort();
         return;
+      }
+      return store.changed();
+    }
+
+    // MCP panel
+    if (store.mcpPanel.open) {
+      const p = store.mcpPanel;
+      if (p.menu) {
+        const m = p.menu;
+        if (key.escape || m.tools) {
+          if (key.escape || key.return) p.menu = undefined;
+          return store.changed();
+        }
+        if (key.upArrow) m.index = (m.index + m.options.length - 1) % m.options.length;
+        else if (key.downArrow) m.index = (m.index + 1) % m.options.length;
+        else if (key.return) return void serverAction(m.server, m.options[m.index]!);
+        return store.changed();
+      }
+      const rows = mcpRows(mcpSections());
+      if (key.upArrow) p.cursor = Math.max(0, p.cursor - 1);
+      else if (key.downArrow) p.cursor = Math.min(Math.max(0, rows.length - 1), p.cursor + 1);
+      else if (key.return) {
+        const row = rows[p.cursor];
+        if (row?.kind === 'server') p.menu = { server: row.name, options: serverMenuOptions(row.status), index: 0 };
+        else if (row?.kind === 'candidate') return void addServer(row.entry);
+      } else if (key.escape) {
+        if (p.query) {
+          p.query = '';
+          p.cursor = 0;
+          runSearch('');
+        } else p.open = false;
+      } else if (key.backspace || key.delete) {
+        p.query = p.query.slice(0, -1);
+        p.cursor = 0;
+        runSearch(p.query);
+      } else if (input && !key.ctrl && !key.meta && !key.tab && /^[\x20-\x7e]+$/.test(input)) {
+        p.query += input;
+        p.cursor = 0;
+        runSearch(p.query);
       }
       return store.changed();
     }
@@ -292,6 +489,9 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     panel = renderApproval({ ...store.approval, choice: store.approvalChoice, cwd: agent.session.cwd, cwdLabel: tildify(agent.session.cwd), mode: store.approvalMode }, w - 1);
   } else if (store.picker.open) {
     panel = renderModelPicker(accounts(), store.picker.index, w - 1, now);
+  } else if (store.mcpPanel.open) {
+    const p = store.mcpPanel;
+    panel = renderMcpPanel({ query: p.query, searching: p.searching, searchError: p.error, sections: mcpSections(), cursor: p.cursor, busy: p.busy, menu: p.menu }, w - 1, Math.max(10, rows - 8));
   } else if (procs.open) {
     panel = renderProcBox(agent.processes, { width: w - 1, height: Math.min(16, Math.max(8, rows - 10)), selectedId: procs.selectedId, now, spinner });
   } else {
@@ -300,8 +500,8 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
   }
 
   const slashHint =
-    !store.approval && !store.picker.open && !procs.open && editor.value.startsWith('/') && !editor.value.includes(' ')
-      ? t.muted(`  ${['/model', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
+    !store.approval && !store.picker.open && !store.mcpPanel.open && !procs.open && editor.value.startsWith('/') && !editor.value.includes(' ')
+      ? t.muted(`  ${['/model', '/mcp', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
       : undefined;
 
   return (

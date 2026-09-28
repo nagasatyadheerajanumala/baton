@@ -12,7 +12,7 @@ Hit a rate limit or run out of quota halfway through a task, and baton hands the
 - **Automatic failover.** Short rate limits wait and retry; exhausted quota, bad keys and outages switch to the next model. Real request bugs are surfaced, never hidden by switching.
 - **Deterministic context compaction.** When the next model has a smaller window, stale file reads are collapsed, old tool output is trimmed, and older turns become a state summary. The original task is always kept, and the saved session keeps full history.
 - **A terminal UI that works like Claude Code and Codex.** The transcript prints into your normal scrollback (scroll, select and search as usual), with a short output preview under every step and `Ctrl+O` for the full output. A clear permission prompt shows the whole command with numbered choices; read-only commands like `git status` or `rg` don't ask. Type follow-ups while it works and they're queued. `/model` shows every model, its account, and when a limited plan comes back. `--fullscreen` gives a split layout with a clickable process pane; `--plain` a line-based prompt.
-- **MCP servers.** Connect local or remote MCP servers (Playwright, Linear, Figma, your own) and every model in the chain can use their tools, so switching providers never loses them. `baton mcp import` brings over the servers you've set up in Codex and Claude Code; `baton mcp login` handles browser sign-in for remote ones.
+- **MCP servers.** Type `/mcp` to add servers from Codex and Claude Code, from popular ones (GitHub, Linear, Notion, Figma, Sentry, Playwright…), or by searching the official MCP registry; they connect immediately and remote ones sign in through your browser. Every model in the chain can use their tools, so switching providers never loses them. The same is available as `baton mcp …` commands.
 - **Background processes.** The agent can start dev servers and watchers in the background, check their output, and stop them. After a provider switch, the new model is told what's still running.
 - **Local tool engine.** read/write/edit files, search, bash, git status. Changes require approval (or `--approval auto-edit` / `--yes`).
 - **Resumable sessions.** Every session is an append-only log in `~/.baton/sessions/`; pick up with `--continue` or `--resume <id>`.
@@ -59,7 +59,7 @@ With `--fullscreen`, the process pane sits on the right and is clickable (`^P` o
 | `/model` | pick any model on any account (every ChatGPT-plan model Codex offers, every Claude model), with each account's status and when a limited plan comes back; `/model claude-sonnet-5-5` switches directly. Your pick is saved as that account's default. |
 | `/status` | session id, token usage and cost, switches so far, files modified |
 | `/compact` | preview what compaction would do for the current model |
-| `/mcp` | MCP servers, their status and tools |
+| `/mcp` | manage MCP servers without leaving the session: see status and tools, sign in, reconnect, disable or remove; add servers from Codex and Claude Code, from a list of popular ones (GitHub, Linear, Notion, Figma, Sentry…), or by searching the MCP registry. New servers connect immediately. |
 | `/clear` | clear the screen (the session keeps its history) |
 | `/exit` | quit; the session is saved |
 

@@ -196,3 +196,62 @@ describe('MCP sign-in (OAuth)', () => {
     http.close();
   });
 });
+
+describe('MCP catalog and registry', () => {
+  it('maps registry entries to runnable configs, preferring remote endpoints', async () => {
+    const { fromRegistry, shortName } = await import('../src/mcp/catalog.js');
+    expect(shortName('com.notion/mcp')).toBe('notion');
+    expect(shortName('io.github.getsentry/sentry-mcp')).toBe('sentry-mcp');
+    expect(fromRegistry({ name: 'com.notion/mcp', description: 'Notion', remotes: [{ type: 'sse', url: 'https://x/sse' }, { type: 'streamable-http', url: 'https://mcp.notion.com/mcp' }] }))
+      .toMatchObject({ name: 'notion', config: { type: 'http', url: 'https://mcp.notion.com/mcp' } });
+    expect(fromRegistry({ name: 'io.github.x/figma', packages: [{ registryType: 'npm', identifier: 'figma-developer-mcp', version: '1.2.0', environmentVariables: [{ name: 'FIGMA_API_KEY', isRequired: true }] }] }))
+      .toMatchObject({ config: { command: 'npx', args: ['-y', 'figma-developer-mcp@1.2.0'], envVars: ['FIGMA_API_KEY'] }, needsEnv: ['FIGMA_API_KEY'] });
+    expect(fromRegistry({ name: 'eu.x/stripe', remotes: [{ type: 'streamable-http', url: 'https://x/mcp/{token}' }] })).toBeUndefined(); // templated URLs can't be used as-is
+  });
+
+  it('ranks the publisher’s own server above wrappers and de-duplicates versions', async () => {
+    const { searchRegistry } = await import('../src/mcp/catalog.js');
+    const body = { servers: [
+      { server: { name: 'ai.smithery/smithery-notion', description: 'wrapper', remotes: [{ type: 'streamable-http', url: 'https://server.smithery.ai/n/mcp' }] } },
+      { server: { name: 'io.github.someone/notion-tools', description: 'third party', packages: [{ registryType: 'npm', identifier: 'notion-tools' }] } },
+      { server: { name: 'com.notion/mcp', description: 'official', remotes: [{ type: 'streamable-http', url: 'https://mcp.notion.com/mcp' }] } },
+      { server: { name: 'com.notion/mcp', description: 'official (older version)', remotes: [{ type: 'streamable-http', url: 'https://mcp.notion.com/mcp' }] } },
+    ] };
+    const fetchImpl = (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const results = await searchRegistry('notion', { fetchImpl });
+    expect(results.map((r) => r.registryName)).toEqual(['com.notion/mcp', 'io.github.someone/notion-tools', 'ai.smithery/smithery-notion']);
+  });
+
+  it('adds, disables, re-enables and removes servers at runtime', async () => {
+    const cwd = dir();
+    const m = new McpManager({}, cwd, dir());
+    const changes: number[] = [];
+    m.on('change', () => changes.push(1));
+    m.add('notes', { ...notes });
+    expect((await m.connect('notes')).status).toBe('connected');
+    expect(m.tools()).toHaveLength(2);
+    await m.setEnabled('notes', false);
+    expect(m.servers[0]).toMatchObject({ status: 'disabled', config: { enabled: false } });
+    expect(m.tools()).toHaveLength(0);
+    expect((await m.setEnabled('notes', true))?.status).toBe('connected');
+    await m.remove('notes');
+    expect(m.servers).toHaveLength(0);
+    expect(changes.length).toBeGreaterThan(3);
+    await m.close();
+  });
+
+  it('renders the panel: your servers with status, then things you can add', async () => {
+    const { renderMcpPanel, mcpRows } = await import('../src/ui/tui/panels.js');
+    const { POPULAR } = await import('../src/mcp/catalog.js');
+    const sections = [
+      { title: 'Your servers', rows: [{ kind: 'server' as const, name: 'linear', status: 'needs-login' as const, tools: 0, where: '' }, { kind: 'server' as const, name: 'playwright', status: 'connected' as const, tools: 25, where: '' }] },
+      { title: 'Popular', rows: POPULAR.slice(0, 2).map((entry) => ({ kind: 'candidate' as const, entry })) },
+    ];
+    expect(mcpRows(sections)).toHaveLength(4);
+    const text = renderMcpPanel({ query: '', searching: false, sections, cursor: 2 }, 110, 40).map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(text).toMatch(/linear\s+needs sign-in · enter to sign in/);
+    expect(text).toMatch(/playwright\s+connected · 25 tools/);
+    expect(text).toMatch(/❯ \+ github\s+Repos, issues, pull requests/);
+    expect(text).toContain('Type to search the MCP registry');
+  });
+});

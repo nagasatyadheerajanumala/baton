@@ -29,6 +29,7 @@ src/
   mcp/client.ts  MCP *client*: connects configured servers (stdio/http/sse), exposes their tools as
                  mcp__server__tool to every model; OAuth via `baton mcp login` (FileOAuthProvider)
   mcp/cli.ts     `baton mcp list|add|remove|import|login|logout`; import asks `codex mcp list --json`
+  mcp/catalog.ts popular servers (official registry entries) + MCP registry search/ranking for the /mcp panel
   router/      errors.ts: SDK error -> FailureKind; router.ts: retry / compact / failover policy
   compaction/  deterministic, produces a *view*; never rewrites the session log
   tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate

@@ -115,6 +115,8 @@ See [`baton.config.example.json`](../baton.config.example.json) for all four pro
 
 ## 5. MCP servers (optional)
 
+The easiest way: type `/mcp` inside baton. You'll see your servers, the ones already set up in Codex and Claude Code, popular ones, and a search box for the official MCP registry. Pick one and press enter; it connects right away, and remote servers open your browser to sign in once.
+
 MCP servers give every model extra tools (a browser, your issue tracker, design files…). Tools work with every model in your chain, and each call goes through baton's permission prompt unless the server marks the tool read-only.
 
 ```bash

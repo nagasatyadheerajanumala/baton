@@ -32,6 +32,22 @@ function save(path: string, config: Config): void {
   writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
 }
 
+/** Add/replace (or with undefined, remove) one server in the config file baton uses. Returns the file path. */
+export function saveServer(cwd: string, name: string, server: McpServerConfig | undefined): string {
+  const { path, config } = editableConfig(cwd);
+  const servers = (config.mcpServers ??= {});
+  if (server) servers[name] = server;
+  else delete servers[name];
+  save(path, config);
+  return path;
+}
+
+/** Everything importable from Codex, Claude Code and the project, one entry per name. */
+export function importCandidates(cwd: string): ImportCandidate[] {
+  const seen = new Set<string>();
+  return [...codexCandidates(), ...claudeCandidates(cwd)].filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));
+}
+
 // ---- Import sources ----------------------------------------------------------------
 
 export interface ImportCandidate {

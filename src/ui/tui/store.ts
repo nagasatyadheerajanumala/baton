@@ -6,6 +6,8 @@ import type { AgentEvents } from '../../agent/loop.js';
 import type { ToolCallBlock, ToolResultBlock } from '../../ir/types.js';
 import { type Target, targetLabel } from '../../router/router.js';
 import { cleanOutput } from './clean.js';
+import type { CatalogEntry } from '../../mcp/catalog.js';
+import type { McpMenu } from './panels.js';
 import { unwrapShell } from '../../tools/readonly.js';
 
 export interface DiffLine {
@@ -185,6 +187,17 @@ export class TuiStore extends EventEmitter {
   /** Messages typed while the agent works; sent in order when the turn ends. */
   queue: string[] = [];
   picker = { open: false, index: 0 };
+  mcpPanel: {
+    open: boolean;
+    cursor: number;
+    query: string;
+    results: CatalogEntry[];
+    searching: boolean;
+    error?: string;
+    busy?: string;
+    menu?: McpMenu;
+    imports: CatalogEntry[];
+  } = { open: false, cursor: 0, query: '', results: [], searching: false, imports: [] };
   /** Highlighted option in the permission prompt. */
   approvalChoice = 0;
   /** Entries before this index are final and printed to scrollback (inline mode). */

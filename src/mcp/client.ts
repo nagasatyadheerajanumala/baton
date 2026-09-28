@@ -215,9 +215,44 @@ export class McpManager extends EventEmitter {
     await Promise.all(this.servers.filter((s) => s.status !== 'disabled').map((s) => this.connect(s.name, timeoutMs)));
   }
 
+  /** Add a server at runtime (e.g. from the /mcp panel); call connect() next. */
+  add(name: string, config: McpServerConfig): McpServerState {
+    const state: McpServerState = { name, config, status: config.enabled === false ? 'disabled' : 'connecting', tools: [] };
+    this.states.set(name, state);
+    this.emit('change');
+    return state;
+  }
+
+  async remove(name: string): Promise<void> {
+    await this.disconnect(name);
+    this.states.delete(name);
+    this.emit('change');
+  }
+
+  async setEnabled(name: string, enabled: boolean): Promise<McpServerState | undefined> {
+    const state = this.states.get(name);
+    if (!state) return undefined;
+    if (enabled) {
+      delete state.config.enabled;
+      return this.connect(name);
+    }
+    state.config.enabled = false;
+    await this.disconnect(name);
+    state.status = 'disabled';
+    state.tools = [];
+    this.emit('change');
+    return state;
+  }
+
+  private async disconnect(name: string): Promise<void> {
+    await this.clients.get(name)?.close().catch(() => {});
+    this.clients.delete(name);
+  }
+
   async connect(name: string, timeoutMs = 20_000, auth?: FileOAuthProvider): Promise<McpServerState> {
     const state = this.states.get(name);
     if (!state) throw new Error(`No MCP server "${name}"`);
+    await this.disconnect(name);
     state.status = 'connecting';
     state.error = undefined;
     this.emit('change');
