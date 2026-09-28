@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.baton/
+*.log
+.env
+.DS_Store

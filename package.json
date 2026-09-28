@@ -1,0 +1,28 @@
+{
+  "name": "baton",
+  "version": "0.1.0",
+  "description": "Coding-agent harness that hot-swaps LLM providers mid-session without losing context.",
+  "type": "module",
+  "bin": {
+    "baton": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "openai": "^7.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
