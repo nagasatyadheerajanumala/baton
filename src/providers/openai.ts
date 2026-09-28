@@ -72,7 +72,11 @@ export class StreamAccumulator {
   /** Returns any new text delta for live display. */
   push(chunk: OpenAI.Chat.ChatCompletionChunk): string | undefined {
     if (chunk.usage) {
-      this.usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens };
+      this.usage = {
+        inputTokens: chunk.usage.prompt_tokens,
+        outputTokens: chunk.usage.completion_tokens,
+        cachedInputTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+      };
     }
     const choice = chunk.choices[0];
     if (!choice) return undefined;

@@ -171,7 +171,7 @@ describe('reasoning blocks are model-bound', () => {
       'gpt-6-sol',
     );
     expect(turn.stopReason).toBe('tool_use');
-    expect(turn.usage).toEqual({ inputTokens: 5, outputTokens: 6 });
+    expect(turn.usage).toEqual({ inputTokens: 5, outputTokens: 6, cachedInputTokens: 0 });
     expect(turn.content).toEqual([
       { type: 'reasoning', origin: 'openai-responses:gpt-6-sol', data: { type: 'reasoning', id: 'rs_9', summary: [], encrypted_content: 'E9' } },
       { type: 'text', text: 'Hi' },

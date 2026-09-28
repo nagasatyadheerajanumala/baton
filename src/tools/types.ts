@@ -1,4 +1,5 @@
 import type { ToolSpec } from '../ir/types.js';
+import type { ProcessManager } from './processes.js';
 
 export interface ToolContext {
   cwd: string;
@@ -8,6 +9,8 @@ export interface ToolContext {
    * The tool engine calls this; tools never prompt directly.
    */
   approve: (summary: string) => Promise<boolean>;
+  /** Shell commands the tools start; shown in the TUI process pane. */
+  processes: ProcessManager;
 }
 
 export interface ToolOutput {

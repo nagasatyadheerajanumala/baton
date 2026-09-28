@@ -1,35 +1,128 @@
 import { headTail } from '../compaction/compact.js';
+import { formatDuration, statusLabel } from './processes.js';
 import { runProcess } from './process.js';
-import { type Tool, num, str } from './types.js';
+import { type Tool, ToolInputError, num, str } from './types.js';
 
 const MAX_OUTPUT = 30_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
+/** How long a background start waits to catch immediate failures. */
+const BACKGROUND_SETTLE_MS = 1_500;
 
 export const bashTool: Tool = {
   mutates: true,
   spec: {
     name: 'bash',
     description:
-      'Run a shell command in the project root (non-interactive; stdin is closed). ' +
-      'Use for builds, tests, linters, package managers and git. Output is combined stdout+stderr.',
+      'Run a shell command in the project root (non-interactive; stdin is closed). Output is combined stdout+stderr. ' +
+      'For long-running commands (dev servers, watchers, anything that does not exit), set background: true; ' +
+      'you get a process id back immediately, then use process_output to read its output and process_kill to stop it.',
     inputSchema: {
       type: 'object',
       properties: {
         command: { type: 'string' },
-        timeout_ms: { type: 'number', description: `Default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}.` },
+        timeout_ms: { type: 'number', description: `Foreground only. Default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}.` },
+        background: { type: 'boolean', description: 'Run without waiting for exit (default false).' },
       },
       required: ['command'],
     },
   },
-  describe: (i) => `$ ${String(i.command)}`,
+  describe: (i) => `$ ${String(i.command)}${i.background === true ? '  (background)' : ''}`,
   async execute(input, ctx) {
     const command = str(input, 'command');
+    const background = input.background === true;
     const timeoutMs = Math.min(MAX_TIMEOUT_MS, num(input, 'timeout_ms') ?? DEFAULT_TIMEOUT_MS);
-    const r = await runProcess('bash', ['-c', command], { cwd: ctx.cwd, timeoutMs, signal: ctx.signal });
-    const out = r.output.length > MAX_OUTPUT ? headTail(r.output, MAX_OUTPUT) : r.output;
-    const status = r.timedOut ? `timed out after ${timeoutMs}ms` : `exit ${r.code}`;
-    return { content: `${out.trimEnd() || '(no output)'}\n[${status}]`, isError: r.timedOut || r.code !== 0 };
+    const proc = ctx.processes.start({ command, cwd: ctx.cwd, background, timeoutMs, signal: ctx.signal });
+
+    if (background) {
+      await Promise.race([proc.done, new Promise((r) => setTimeout(r, BACKGROUND_SETTLE_MS))]);
+      const early = proc.output.trimEnd();
+      if (!proc.running) {
+        return {
+          content: `Background process #${proc.info.id} ended within ${BACKGROUND_SETTLE_MS}ms (${statusLabel(proc.info)}).\n${early || '(no output)'}`,
+          isError: proc.info.exitCode !== 0,
+        };
+      }
+      return {
+        content:
+          `Started background process #${proc.info.id} (pid ${proc.info.pid}). ` +
+          `Check it with process_output {"id": ${proc.info.id}}; stop it with process_kill {"id": ${proc.info.id}}.` +
+          (early ? `\nOutput so far:\n${headTail(early, 4_000)}` : ''),
+      };
+    }
+
+    await proc.done;
+    const out = proc.output.length > MAX_OUTPUT ? headTail(proc.output, MAX_OUTPUT) : proc.output;
+    const status = proc.info.status === 'timed_out' ? `timed out after ${timeoutMs}ms` : statusLabel(proc.info);
+    const failed = proc.info.status !== 'exited' || proc.info.exitCode !== 0;
+    return { content: `${out.trimEnd() || '(no output)'}\n[${status}]`, isError: failed };
+  },
+};
+
+function procId(input: Record<string, unknown>): number {
+  const id = num(input, 'id');
+  if (id === undefined) throw new ToolInputError('"id" is required');
+  return id;
+}
+
+export const processOutputTool: Tool = {
+  mutates: false,
+  spec: {
+    name: 'process_output',
+    description: 'Read recent output and status of a process started with bash (background or finished).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Process id returned by bash.' },
+        tail_lines: { type: 'number', description: 'Lines from the end to return (default 80).' },
+      },
+      required: ['id'],
+    },
+  },
+  describe: (i) => `output of #${String(i.id)}`,
+  async execute(input, ctx) {
+    const proc = ctx.processes.get(procId(input));
+    if (!proc) return { content: `No process #${String(input.id)}. Use process_list to see ids.`, isError: true };
+    const lines = Math.min(500, Math.max(1, num(input, 'tail_lines') ?? 80));
+    const age = formatDuration((proc.info.endedAt ?? Date.now()) - proc.info.startedAt);
+    return { content: `#${proc.info.id} ${proc.info.command}\n[${statusLabel(proc.info)}, ${age}]\n${proc.tail(lines) || '(no output yet)'}` };
+  },
+};
+
+export const processKillTool: Tool = {
+  mutates: false, // only ever stops processes baton itself started
+  spec: {
+    name: 'process_kill',
+    description: 'Stop a process started with bash (SIGTERM, then SIGKILL after 2s).',
+    inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] },
+  },
+  describe: (i) => `stop #${String(i.id)}`,
+  async execute(input, ctx) {
+    const id = procId(input);
+    const proc = ctx.processes.get(id);
+    if (!proc) return { content: `No process #${id}.`, isError: true };
+    if (!proc.running) return { content: `#${id} already stopped (${statusLabel(proc.info)}).` };
+    ctx.processes.kill(id);
+    return { content: `Stopped #${id} (${proc.info.command}).` };
+  },
+};
+
+export const processListTool: Tool = {
+  mutates: false,
+  spec: {
+    name: 'process_list',
+    description: 'List processes started with bash in this session, with status.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  describe: () => 'list processes',
+  async execute(_input, ctx) {
+    const procs = ctx.processes.list();
+    if (!procs.length) return { content: 'No processes started this session.' };
+    return {
+      content: procs
+        .map((p) => `#${p.info.id}  ${statusLabel(p.info).padEnd(10)} ${formatDuration((p.info.endedAt ?? Date.now()) - p.info.startedAt).padStart(7)}  ${p.info.command}`)
+        .join('\n'),
+    };
   },
 };
 

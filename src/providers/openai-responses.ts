@@ -143,7 +143,13 @@ export function fromResponse(res: OpenAI.Responses.Response, model = ''): Assist
   return {
     content,
     stopReason,
-    usage: res.usage ? { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens } : undefined,
+    usage: res.usage
+      ? {
+          inputTokens: res.usage.input_tokens,
+          outputTokens: res.usage.output_tokens,
+          cachedInputTokens: res.usage.input_tokens_details?.cached_tokens ?? 0,
+        }
+      : undefined,
   };
 }
 

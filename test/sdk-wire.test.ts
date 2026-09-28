@@ -139,9 +139,9 @@ describe('real SDKs over the wire', () => {
     // Usage from both vendors' streams landed on the right messages.
     const usage = session.messages.filter((m) => m.role === 'assistant').map((m) => m.meta.usage);
     expect(usage).toEqual([
-      { inputTokens: 100, outputTokens: 12 },
-      { inputTokens: 42, outputTokens: 17 },
-      { inputTokens: 42, outputTokens: 17 },
+      { inputTokens: 100, outputTokens: 12, cachedInputTokens: 0 },
+      { inputTokens: 42, outputTokens: 17, cachedInputTokens: 0 },
+      { inputTokens: 42, outputTokens: 17, cachedInputTokens: 0 },
     ]);
   });
 });

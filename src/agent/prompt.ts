@@ -11,6 +11,7 @@ export function buildSystemPrompt(cwd: string): string {
 # How to work
 - Read files before editing them. Use edit_file for targeted changes and write_file only for new files or full rewrites.
 - Run the project's tests, type checker or linter via bash after making changes, when they exist.
+- Start dev servers, watchers and other long-running commands with bash background: true, then check them with process_output. Stop what you started when it is no longer needed.
 - Keep going until the task is done, then reply with a short summary of what changed and anything left unresolved.
 - Be concise. Do not narrate each tool call.
 - Never run destructive commands (rm -rf, git reset --hard, force pushes) unless the user explicitly asked for that.`;

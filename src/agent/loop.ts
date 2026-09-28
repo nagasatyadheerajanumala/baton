@@ -4,6 +4,7 @@ import { type ToolCallBlock, type ToolResultBlock, isToolCall } from '../ir/type
 import type { Classified } from '../router/errors.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
 import { gitSnapshot } from '../tools/shell.js';
+import { ProcessManager, formatDuration } from '../tools/processes.js';
 import type { ToolEngine } from '../tools/registry.js';
 import { buildSystemPrompt } from './prompt.js';
 
@@ -20,6 +21,8 @@ export interface AgentEvents {
 export interface AgentOptions {
   cwd: string;
   approve: (summary: string) => Promise<boolean>;
+  /** Shared with the UI; a private one is created if omitted. */
+  processes?: ProcessManager;
   /** Hard stop on runaway tool loops. */
   maxSteps?: number;
 }
@@ -28,12 +31,16 @@ export interface AgentOptions {
 const SAFETY = 0.9;
 
 export class Agent {
+  readonly processes: ProcessManager;
+
   constructor(
     readonly session: Session,
     readonly router: Router,
     readonly tools: ToolEngine,
     private readonly opts: AgentOptions,
-  ) {}
+  ) {
+    this.processes = opts.processes ?? new ProcessManager();
+  }
 
   /** Run one human turn to completion: model -> tools -> model ... -> final answer. */
   async run(userText: string, events: AgentEvents = {}, signal?: AbortSignal): Promise<void> {
@@ -72,7 +79,7 @@ export class Agent {
           continue;
         }
         events.onToolStart?.(call, this.tools.describe(call));
-        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve });
+        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes });
         events.onToolEnd?.(call, result);
         results.push(result);
       }
@@ -124,6 +131,11 @@ export class Agent {
       const files = touchedFiles(this.session.messages);
       if (files.length) lines.push('', 'Files modified so far this session:', ...files.map((f) => `- ${f}`));
       lines.push('', 'Current git state (fresh, taken just now):', '```', await gitSnapshot(this.opts.cwd), '```');
+      const bg = this.processes.list().filter((p) => p.running);
+      if (bg.length) {
+        lines.push('', 'Background processes still running (started earlier in this session; use process_output / process_kill):');
+        for (const p of bg) lines.push(`- #${p.info.id} \`${p.info.command}\` (running ${formatDuration(Date.now() - p.info.startedAt)})`);
+      }
     }
     return lines.join('\n');
   }

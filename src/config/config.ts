@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { Price } from '../pricing.js';
 import type { Target } from '../router/router.js';
 
 export interface ProviderConfig {
@@ -26,6 +27,8 @@ export interface TargetConfig {
   model: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** USD per 1M tokens, for the cost estimate. Built-in prices cover current OpenAI/Claude models. */
+  pricing?: Price;
 }
 
 export type ApprovalMode = 'ask' | 'auto-edit' | 'yolo';
@@ -98,6 +101,7 @@ export function toTargets(config: Config): Target[] {
     model: t.model,
     contextWindow: t.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     maxOutputTokens: t.maxOutputTokens ?? DEFAULT_MAX_OUTPUT,
+    ...(t.pricing ? { pricing: t.pricing } : {}),
   }));
 }
 

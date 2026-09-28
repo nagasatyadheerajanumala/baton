@@ -73,8 +73,11 @@ export interface Message {
 }
 
 export interface Usage {
+  /** All input tokens, including any served from the provider's prompt cache. */
   inputTokens: number;
   outputTokens: number;
+  /** Portion of inputTokens read from cache (billed at a discount). */
+  cachedInputTokens?: number;
 }
 
 /** Vendor-neutral tool definition (JSON Schema input). */

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Agent } from './agent/loop.js';
@@ -8,8 +8,11 @@ import { runDoctor } from './doctor.js';
 import { Session } from './ir/session.js';
 import { MissingKeyAdapter, buildAdapters } from './providers/registry.js';
 import { Router, targetLabel } from './router/router.js';
+import { ProcessManager } from './tools/processes.js';
 import { ToolEngine } from './tools/registry.js';
 import { createRl, makeApprover, runRepl, terminalEvents } from './ui/repl.js';
+
+const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 const USAGE = `baton — coding agent that hot-swaps LLM providers mid-session
 
@@ -25,6 +28,9 @@ Options:
   -m, --model <name>         start on this chain entry (label, model id, or index)
   -a, --approval <mode>      ask | auto-edit | yolo   (default: ask)
   -y, --yes                  shorthand for --approval yolo
+      --plain                line-based prompt instead of the full-screen UI
+      --no-mouse             don't capture the mouse (keeps native text selection)
+  -v, --version              print the version
   -h, --help                 show this help
 
 Config: ./baton.config.json, else ~/.baton/config.json, else built from
@@ -40,11 +46,18 @@ async function main(): Promise<number> {
       model: { type: 'string', short: 'm' },
       approval: { type: 'string', short: 'a' },
       yes: { type: 'boolean', short: 'y' },
+      plain: { type: 'boolean' },
+      'no-mouse': { type: 'boolean' },
+      version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
   });
   if (values.help) {
     console.log(USAGE);
+    return 0;
+  }
+  if (values.version) {
+    console.log(VERSION);
     return 0;
   }
 
@@ -92,17 +105,15 @@ async function main(): Promise<number> {
 
   const prompt = values.print ?? (positionals.length ? positionals.join(' ') : undefined);
   const oneShot = values.print !== undefined || !process.stdin.isTTY;
-  const rl = oneShot ? undefined : createRl();
-  const agent = new Agent(session, router, new ToolEngine(), {
-    cwd: session.cwd,
-    approve: makeApprover(approval, () => rl),
-  });
+  const processes = new ProcessManager();
+  process.once('exit', () => processes.killAll());
 
   if (oneShot) {
     if (!prompt) {
       console.error('Nothing to do: pass a prompt with -p.');
       return 1;
     }
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => undefined) });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
     await agent.run(prompt, terminalEvents(), controller.signal);
@@ -112,8 +123,22 @@ async function main(): Promise<number> {
   }
 
   if (prompt) console.error('Tip: use -p for one-shot mode. Starting interactive session.');
-  await runRepl(agent, rl!, source);
-  rl!.close();
+
+  const fullScreen = !values.plain && process.stdout.isTTY && (process.stdout.columns ?? 0) >= 60 && (process.stdout.rows ?? 0) >= 12;
+  if (fullScreen) {
+    const { TuiStore } = await import('./ui/tui/store.js');
+    const { runTui } = await import('./ui/tui/run.js');
+    const store = new TuiStore(session.cwd, approval);
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: store.approve });
+    await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval });
+    console.log(`Session saved. Resume with: baton --resume ${session.id}`);
+    return 0;
+  }
+
+  const rl = createRl();
+  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: makeApprover(approval, () => rl) });
+  await runRepl(agent, rl, source);
+  rl.close();
   return 0;
 }
 

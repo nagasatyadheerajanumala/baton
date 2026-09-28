@@ -1,6 +1,6 @@
 import type { ToolCallBlock, ToolResultBlock, ToolSpec } from '../ir/types.js';
 import { editFileTool, listFilesTool, readFileTool, searchTool, writeFileTool } from './fs.js';
-import { bashTool, gitStatusTool } from './shell.js';
+import { bashTool, gitStatusTool, processKillTool, processListTool, processOutputTool } from './shell.js';
 import { type Tool, type ToolContext, ToolInputError } from './types.js';
 
 export const DEFAULT_TOOLS: Tool[] = [
@@ -10,6 +10,9 @@ export const DEFAULT_TOOLS: Tool[] = [
   listFilesTool,
   searchTool,
   bashTool,
+  processOutputTool,
+  processKillTool,
+  processListTool,
   gitStatusTool,
 ];
 

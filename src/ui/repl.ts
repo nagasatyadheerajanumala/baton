@@ -1,25 +1,8 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import type { Agent, AgentEvents } from '../agent/loop.js';
-import { compact, estimateTokens } from '../compaction/compact.js';
-import { touchedFiles } from '../ir/session.js';
 import { AllTargetsExhaustedError, targetLabel } from '../router/router.js';
-
-const c = {
-  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
-  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-  yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
-  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-};
-
-const HELP = `Commands:
-  /model [name|index]  show the failover chain, or switch to a model manually
-  /status              session, token and cooldown info
-  /compact             preview what compaction would do for the current model
-  /help                this message
-  /exit                quit (session is saved; resume with --resume <id>)`;
+import { c, runCommand } from './commands.js';
 
 /** Terminal event printer shared by the REPL and one-shot mode. */
 export function terminalEvents(): AgentEvents & { reset(): void } {
@@ -117,68 +100,10 @@ export async function runRepl(agent: Agent, rl: Interface, configSource: string)
 
 /** Returns false to exit. */
 function handleCommand(input: string, agent: Agent): boolean {
-  const [cmd, ...rest] = input.slice(1).split(/\s+/);
-  const arg = rest.join(' ');
-  const router = agent.router;
-
-  switch (cmd) {
-    case 'exit':
-    case 'quit':
-      return false;
-    case 'help':
-      stdout.write(HELP + '\n');
-      break;
-    case 'model':
-      if (arg) {
-        try {
-          const t = router.setCurrent(arg);
-          stdout.write(`Switched to ${c.bold(targetLabel(t))}. History carries over.\n`);
-        } catch (e) {
-          stdout.write(c.red((e as Error).message) + '\n');
-        }
-      } else {
-        router.chain.forEach((t, i) => {
-          const cur = t === router.current ? c.green('●') : ' ';
-          const cd = router.cooldownRemaining(t);
-          const cool = cd === 0 ? '' : c.yellow(Number.isFinite(cd) ? ` (cooling down ${Math.ceil(cd / 1000)}s)` : ' (disabled: bad key or model id — run baton doctor)');
-          stdout.write(`${cur} ${i}  ${targetLabel(t)}  ${c.dim(`${(t.contextWindow / 1000).toFixed(0)}k ctx`)}${cool}\n`);
-        });
-      }
-      break;
-    case 'status': {
-      const msgs = agent.session.messages;
-      const usage = msgs.reduce(
-        (a, m) => ({ i: a.i + (m.meta.usage?.inputTokens ?? 0), o: a.o + (m.meta.usage?.outputTokens ?? 0) }),
-        { i: 0, o: 0 },
-      );
-      stdout.write(
-        [
-          `session   ${agent.session.id}`,
-          `model     ${targetLabel(router.current)}`,
-          `history   ${msgs.length} messages, ≈${estimateTokens(msgs).toLocaleString()} tokens`,
-          `billed    ${usage.i.toLocaleString()} in / ${usage.o.toLocaleString()} out (reported by providers)`,
-          `switches  ${agent.session.switches.map((s) => `${s.from}→${s.to} (${s.reason})`).join(', ') || 'none'}`,
-          `files     ${touchedFiles(msgs).join(', ') || 'none modified'}`,
-        ].join('\n') + '\n',
-      );
-      break;
-    }
-    case 'compact': {
-      const t = router.current;
-      const budget = Math.floor((t.contextWindow - t.maxOutputTokens) * 0.9);
-      const before = estimateTokens(agent.session.messages);
-      const r = compact(agent.session.messages, { budgetTokens: Number(arg) || budget });
-      stdout.write(
-        `≈${before.toLocaleString()} → ≈${r.estTokens.toLocaleString()} tokens (budget ${(Number(arg) || budget).toLocaleString()}); ` +
-          `passes: ${r.applied.join(', ') || 'none needed'}\n` +
-          c.dim('Compaction is applied automatically per request; the saved session keeps full history.\n'),
-      );
-      break;
-    }
-    default:
-      stdout.write(c.red(`Unknown command /${cmd}. `) + 'Try /help.\n');
-  }
-  return true;
+  const r = runCommand(input, agent);
+  if (r.output) stdout.write(r.output + '\n');
+  if (r.clear) stdout.write('\x1bc');
+  return !r.exit;
 }
 
 export function createRl(): Interface {

@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ToolCallBlock } from '../src/ir/types.js';
+import { ProcessManager } from '../src/tools/processes.js';
 import { ToolEngine } from '../src/tools/registry.js';
 
 const engine = new ToolEngine();
 const dir = () => mkdtempSync(join(tmpdir(), 'baton-tools-'));
 const call = (name: string, input: Record<string, unknown>): ToolCallBlock => ({ type: 'tool_call', id: 'c1', name, input });
-const ctx = (cwd: string, approve: (s: string) => Promise<boolean> = async () => true) => ({ cwd, approve });
+const ctx = (cwd: string, approve: (s: string) => Promise<boolean> = async () => true) => ({ cwd, approve, processes: new ProcessManager() });
 
 describe('ToolEngine', () => {
   it('edit_file requires a unique match', async () => {

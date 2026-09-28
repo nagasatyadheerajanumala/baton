@@ -37,7 +37,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     return {
       content: fromAnthropicContent(final.content, req.model),
       stopReason: mapStop(final.stop_reason),
-      usage: { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens },
+      usage: anthropicUsage(final.usage),
     };
   }
 }
@@ -125,4 +125,11 @@ function mapStop(r: string | null): StopReason {
   if (r === 'tool_use') return 'tool_use';
   if (r === 'max_tokens') return 'max_tokens';
   return 'other';
+}
+
+/** Anthropic reports uncached input separately from cache reads/writes; normalize to totals. */
+export function anthropicUsage(u: Anthropic.Usage): AssistantTurn['usage'] {
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  return { inputTokens: u.input_tokens + cacheRead + cacheWrite, outputTokens: u.output_tokens, cachedInputTokens: cacheRead };
 }

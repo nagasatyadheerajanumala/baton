@@ -20,9 +20,21 @@ src/
     registry.ts          config -> adapters; MissingKeyAdapter for providers without a key
   router/      errors.ts: SDK error -> FailureKind; router.ts: retry / compact / failover policy
   compaction/  deterministic, produces a *view*; never rewrites the session log
-  tools/       vendor-agnostic tool engine (fs, search, bash, git_status) + approval gate
-  agent/       loop.ts: model -> tools -> model; handoff note on provider switch
-  ui/          readline REPL + terminal event printer
+  tools/       vendor-agnostic tool engine (fs, search, bash, process_*, git_status) + approval gate
+    processes.ts   ProcessManager: every shell command tools start; bounded output; group kill
+  agent/       loop.ts: model -> tools -> model; handoff note on provider switch (incl. running processes)
+  pricing.ts   list prices + session cost estimate
+  ui/
+    commands.ts    slash commands shared by both UIs
+    repl.ts        line-based prompt (--plain, pipes, narrow terminals)
+    theme.ts       palette + glyphs; all UI color goes through here
+    tui/           full-screen Ink app
+      store.ts     UI state driven by agent events (no React)
+      format.ts    pure renderers: conversation, process pane, header, status, input
+      editor.ts    readline-style prompt editing (pure)
+      mouse.ts     SGR mouse parsing; strips reports from stdin before Ink sees them
+      App.tsx      layout, keyboard and mouse handling
+      run.tsx      alt screen, mouse on/off, cleanup
   config/      baton.config.json > ~/.baton/config.json > env-derived chain; DEFAULT_MODELS
   doctor.ts    `baton doctor`: real two-step tool loop per chain entry, plain-language diagnosis
 ```
@@ -37,10 +49,12 @@ src/
 6. **The router is sticky.** After failover it stays on the new target; switching back is explicit (`/model`).
 7. **Reasoning blocks are model-bound.** `reasoning` IR blocks carry `origin = protocol:model`; only the adapter calling that exact model emits them, verbatim and in original order. Anthropic and OpenAI both require them within a tool loop (Anthropic silently disables thinking otherwise).
 8. **A missing API key never crashes startup.** It becomes a `MissingKeyAdapter` that fails as `auth`, so failover skips it.
+9. **Nothing baton starts outlives it.** Processes run in their own process group and `killAll()` runs on every exit path.
+10. **Renderers return exact-width lines.** `format.ts` functions pad/truncate to the column; mouse hit-testing relies on the layout they report (`procCols`, `rowIds`, `closeCols`).
 
 ## Design decisions
 
-- TypeScript/Node, official SDKs, minimal deps (no CLI framework; `node:util` parseArgs, `node:readline`).
+- TypeScript/Node, official SDKs, minimal deps (no CLI framework; `node:util` parseArgs). Full-screen UI on Ink 7 (React for terminals), one accent color on a muted palette (theme.ts).
 - OpenAI itself goes through the Responses API: current OpenAI reasoning models only allow function calling on Chat Completions with reasoning off. Chat Completions remains the adapter for OpenAI-compatible servers.
 - Default model ids live in `DEFAULT_MODELS` (src/config/config.ts), checked against provider docs 2026-09-28.
 - Compaction is deterministic for now (stale reads → head/tail truncation → drop middle turns with a state summary). LLM summarization can slot in as a pass between truncation and drop, and must not run on the failover path itself.

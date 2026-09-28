@@ -1,4 +1,5 @@
 import type { AssistantTurn } from '../ir/types.js';
+import type { Price } from '../pricing.js';
 import type { CompletionRequest, ProviderAdapter } from '../providers/types.js';
 import { type Classified, classifyError } from './errors.js';
 
@@ -8,6 +9,8 @@ export interface Target {
   model: string;
   contextWindow: number;
   maxOutputTokens: number;
+  /** USD per 1M tokens; falls back to the built-in table in pricing.ts. */
+  pricing?: Price;
 }
 
 export const targetLabel = (t: Target) => `${t.provider}/${t.model}`;
@@ -83,6 +86,10 @@ export class Router {
 
   get current(): Target {
     return this.chain[this.currentIndex]!;
+  }
+
+  adapter(t: Target): ProviderAdapter {
+    return this.adapters.get(t.provider)!;
   }
 
   /** Manually pick a target by label, index, or unique substring. */
