@@ -4,6 +4,7 @@ import type OpenAI from 'openai';
 import type { Message } from '../src/ir/types.js';
 import { fromAnthropicContent, toAnthropicMessages } from '../src/providers/anthropic.js';
 import { StreamAccumulator, toOpenAIMessages } from '../src/providers/openai.js';
+import { fromResponse, toResponsesInput } from '../src/providers/openai-responses.js';
 import { sanitizeToolId } from '../src/providers/types.js';
 
 const m = (role: Message['role'], content: Message['content']): Message => ({ id: Math.random().toString(), role, content, meta: { ts: 0 } });
@@ -117,5 +118,66 @@ describe('sanitizeToolId', () => {
     expect(sanitizeToolId('call:abc/1.2')).toBe('call_abc_1_2');
     expect(sanitizeToolId('call:abc/1.2')).toBe(sanitizeToolId('call:abc/1.2'));
     expect(sanitizeToolId('')).toMatch(/^[a-zA-Z0-9_-]+$/);
+  });
+});
+
+describe('reasoning blocks are model-bound', () => {
+  const withReasoning: Message[] = [
+    m('user', [{ type: 'text', text: 'go' }]),
+    m('assistant', [
+      { type: 'reasoning', origin: 'anthropic:claude-opus-5-5', data: { type: 'thinking', thinking: '', signature: 'S1' } },
+      { type: 'tool_call', id: 'toolu_1', name: 'bash', input: { command: 'ls' } },
+    ]),
+    m('user', [{ type: 'tool_result', callId: 'toolu_1', content: 'a.ts' }]),
+    m('assistant', [
+      { type: 'reasoning', origin: 'openai-responses:gpt-6-sol', data: { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'E1' } },
+      { type: 'tool_call', id: 'call_2', name: 'read_file', input: { path: 'a.ts' } },
+    ]),
+    m('user', [{ type: 'tool_result', callId: 'call_2', content: '1\tx' }]),
+  ];
+
+  it('Anthropic replays thinking only to the model that produced it', () => {
+    const same = JSON.stringify(toAnthropicMessages(withReasoning, 'claude-opus-5-5'));
+    expect(same).toContain('"signature":"S1"');
+    expect(same).not.toContain('E1');
+    // Different Claude model: signatures are model-bound, so drop them.
+    expect(JSON.stringify(toAnthropicMessages(withReasoning, 'claude-sonnet-5-5'))).not.toContain('S1');
+  });
+
+  it('Responses replays reasoning items only to the model that produced them, in order', () => {
+    const items = toResponsesInput(withReasoning, 'gpt-6-sol') as unknown as Array<Record<string, unknown>>;
+    expect(items.map((i) => i.type ?? `msg:${String(i.role)}`)).toEqual([
+      'msg:user', 'function_call', 'function_call_output', 'reasoning', 'function_call', 'function_call_output',
+    ]);
+    expect(JSON.stringify(items)).not.toContain('S1');
+    expect(JSON.stringify(toResponsesInput(withReasoning, 'gpt-6-luna'))).not.toContain('E1');
+  });
+
+  it('Chat Completions never sends reasoning blocks', () => {
+    expect(JSON.stringify(toOpenAIMessages('s', withReasoning))).not.toMatch(/S1|E1/);
+  });
+
+  it('parses Responses output into IR, including reasoning and stop reasons', () => {
+    const turn = fromResponse(
+      {
+        status: 'completed',
+        output: [
+          { type: 'reasoning', id: 'rs_9', summary: [], encrypted_content: 'E9' },
+          { type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Hi', annotations: [] }] },
+          { type: 'function_call', call_id: 'call_9', name: 'bash', arguments: '{"command":"ls"}' },
+        ],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      } as unknown as OpenAI.Responses.Response,
+      'gpt-6-sol',
+    );
+    expect(turn.stopReason).toBe('tool_use');
+    expect(turn.usage).toEqual({ inputTokens: 5, outputTokens: 6 });
+    expect(turn.content).toEqual([
+      { type: 'reasoning', origin: 'openai-responses:gpt-6-sol', data: { type: 'reasoning', id: 'rs_9', summary: [], encrypted_content: 'E9' } },
+      { type: 'text', text: 'Hi' },
+      { type: 'tool_call', id: 'call_9', name: 'bash', input: { command: 'ls' } },
+    ]);
+    const truncated = fromResponse({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] } as unknown as OpenAI.Responses.Response);
+    expect(truncated.stopReason).toBe('max_tokens');
   });
 });

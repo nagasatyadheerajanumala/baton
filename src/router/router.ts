@@ -35,12 +35,13 @@ export class AllTargetsExhaustedError extends Error {
   }
 }
 
-const COOLDOWN_MS: Record<'rate_limit' | 'quota' | 'overloaded' | 'network' | 'auth', number> = {
+const COOLDOWN_MS: Record<'rate_limit' | 'quota' | 'overloaded' | 'network' | 'auth' | 'model_not_found', number> = {
   rate_limit: 60_000,
   quota: 60 * 60_000,
   overloaded: 30_000,
   network: 30_000,
   auth: Number.POSITIVE_INFINITY,
+  model_not_found: Number.POSITIVE_INFINITY,
 };
 
 export interface RouterOptions {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MissingKeyAdapter, buildAdapters } from '../src/providers/registry.js';
 import { classifyError } from '../src/router/errors.js';
 import { AllTargetsExhaustedError, Router, type Target } from '../src/router/router.js';
 import { ScriptedAdapter, apiError, quotaError, text } from './helpers.js';
@@ -17,6 +18,9 @@ describe('classifyError', () => {
     [apiError(400, "This model's maximum context length is 128000 tokens", { error: { code: 'context_length_exceeded' } }), 'context_length'],
     [apiError(400, 'prompt is too long: 210000 tokens > 200000 maximum'), 'context_length'],
     [apiError(401, 'invalid x-api-key'), 'auth'],
+    [apiError(404, 'The model `gpt-7` does not exist or you do not have access to it.', { error: { code: 'model_not_found' } }), 'model_not_found'],
+    [apiError(404, '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-9"}}'), 'model_not_found'],
+    [apiError(400, "This model's maximum context length is 128000 tokens"), 'context_length'],
     [apiError(400, 'tools.0.name: String should match pattern'), 'fatal'],
     [Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }), 'network'],
     [Object.assign(new Error('aborted'), { name: 'AbortError' }), 'aborted'],
@@ -77,6 +81,30 @@ describe('Router', () => {
     const r = new Router([T('a'), T('b')], new Map([['a', a], ['b', b]]), noSleep);
     await expect(r.complete(prepare)).rejects.toThrow('invalid tool schema');
     expect(b.requests).toHaveLength(0);
+  });
+
+  it('fails over past a model id that no longer exists, and never retries it', async () => {
+    const a = new ScriptedAdapter('a', [apiError(404, 'model: claude-old not found')]);
+    const b = new ScriptedAdapter('b', [text('1'), text('2')]);
+    let now = 0;
+    const r = new Router([T('a'), T('b')], new Map([['a', a], ['b', b]]), { ...noSleep, now: () => now });
+    expect((await r.complete(prepare)).target.provider).toBe('b');
+    now += 365 * 24 * 3_600_000;
+    expect(r.cooldownRemaining(T('a'))).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('skips a provider with no API key and keeps working on the rest of the chain', async () => {
+    const config = {
+      providers: { openai: { type: 'openai' as const }, local: { type: 'openai-compatible' as const, baseURL: 'http://x' } },
+      chain: [{ provider: 'openai', model: 'gpt' }, { provider: 'local', model: 'm' }],
+    };
+    const adapters = buildAdapters(config, {}); // must not throw even though OPENAI_API_KEY is unset
+    expect(adapters.get('openai')).toBeInstanceOf(MissingKeyAdapter);
+    adapters.set('local', new ScriptedAdapter('local', [text('ok')]));
+    const kinds: string[] = [];
+    const r = new Router([T('openai'), T('local')], adapters, noSleep);
+    expect((await r.complete(prepare, { onSwitch: (_f, _t, why) => kinds.push(why.kind) })).target.provider).toBe('local');
+    expect(kinds).toEqual(['auth']);
   });
 
   it('reports every failure when the whole chain is exhausted', async () => {

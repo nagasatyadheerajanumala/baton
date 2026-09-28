@@ -5,7 +5,7 @@ import { type CompletionRequest, type ProviderAdapter, sanitizeToolId } from './
 
 type ChatMessage = OpenAI.Chat.ChatCompletionMessageParam;
 
-export interface OpenAIAdapterOptions {
+export interface OpenAIChatAdapterOptions {
   name: string;
   apiKey?: string;
   /** Set for OpenRouter, LiteLLM, Ollama, or any OpenAI-compatible server. */
@@ -19,16 +19,17 @@ export interface OpenAIAdapterOptions {
 }
 
 /**
- * Chat Completions adapter. Deliberately not the Responses API: Chat
- * Completions is the lingua franca that OpenRouter, LiteLLM and Ollama all
- * speak, so this single adapter covers four provider slots.
+ * Chat Completions adapter for OpenAI-compatible servers (OpenRouter, LiteLLM,
+ * Ollama, vLLM...). OpenAI itself uses the Responses adapter, because its
+ * reasoning models only allow function calling on Chat Completions with
+ * reasoning turned off. Reasoning blocks from other providers are skipped.
  */
-export class OpenAIAdapter implements ProviderAdapter {
+export class OpenAIChatAdapter implements ProviderAdapter {
   readonly name: string;
   private readonly client: OpenAI;
   private readonly maxTokensParam: 'max_tokens' | 'max_completion_tokens';
 
-  constructor(opts: OpenAIAdapterOptions) {
+  constructor(opts: OpenAIChatAdapterOptions) {
     this.name = opts.name;
     this.client = new OpenAI({
       apiKey: opts.apiKey ?? 'unused',

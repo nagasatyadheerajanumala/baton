@@ -1,9 +1,12 @@
 #!/usr/bin/env node
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Agent } from './agent/loop.js';
-import { type ApprovalMode, loadConfig, toTargets } from './config/config.js';
+import { type ApprovalMode, configPaths, loadConfig, starterConfig, toTargets } from './config/config.js';
+import { runDoctor } from './doctor.js';
 import { Session } from './ir/session.js';
-import { buildAdapters } from './providers/registry.js';
+import { MissingKeyAdapter, buildAdapters } from './providers/registry.js';
 import { Router, targetLabel } from './router/router.js';
 import { ToolEngine } from './tools/registry.js';
 import { createRl, makeApprover, runRepl, terminalEvents } from './ui/repl.js';
@@ -15,6 +18,8 @@ Usage:
   baton -p "prompt"          run one prompt non-interactively, then exit
   baton --continue           resume the most recent session
   baton --resume <id>        resume a specific session
+  baton doctor               verify every model in the chain with a real tool call
+  baton init                 write a starter ~/.baton/config.json
 
 Options:
   -m, --model <name>         start on this chain entry (label, model id, or index)
@@ -23,7 +28,7 @@ Options:
   -h, --help                 show this help
 
 Config: ./baton.config.json, else ~/.baton/config.json, else built from
-OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY in the environment.`;
+OPENAI_API_KEY / ANTHROPIC_API_KEY in the environment. Setup guide: docs/SETUP.md`;
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -44,14 +49,38 @@ async function main(): Promise<number> {
   }
 
   const cwd = process.cwd();
+
+  if (positionals[0] === 'init') {
+    const target = configPaths(cwd)[1]!;
+    if (existsSync(target)) {
+      console.log(`${target} already exists; not overwriting. Run \`baton doctor\` to check it.`);
+      return 0;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, JSON.stringify(starterConfig(), null, 2) + '\n');
+    console.log(`Wrote ${target}\nEdit the chain order/models if you like, export your API keys, then run: baton doctor`);
+    return 0;
+  }
+
   const { config, source } = loadConfig(cwd);
+  if (positionals[0] === 'doctor') return runDoctor(config, source);
+
   if (config.chain.length === 0) {
     console.error('No models configured. Set OPENAI_API_KEY and/or ANTHROPIC_API_KEY, or create baton.config.json.\n');
     console.error(USAGE);
     return 1;
   }
 
-  const router = new Router(toTargets(config), buildAdapters(config));
+  const adapters = buildAdapters(config);
+  const missing = [...adapters.values()].filter((a): a is MissingKeyAdapter => a instanceof MissingKeyAdapter);
+  if (missing.length === adapters.size) {
+    console.error(`No API keys found (${missing.map((m) => m.envName).join(', ')}). See docs/SETUP.md, then run: baton doctor`);
+    return 1;
+  }
+  for (const m of missing) console.error(`warning: ${m.envName} is not set; "${m.name}" will be skipped during failover.`);
+  const router = new Router(toTargets(config), adapters);
+  const firstWithKey = router.chain.findIndex((t) => !(adapters.get(t.provider) instanceof MissingKeyAdapter));
+  router.setCurrent(String(firstWithKey));
   if (values.model) router.setCurrent(values.model);
 
   const resumeId = values.resume ?? (values.continue ? Session.latestId() : undefined);

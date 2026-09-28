@@ -6,6 +6,12 @@
   "bin": {
     "baton": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "docs",
+    "baton.config.example.json"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -13,8 +19,22 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "npm run build"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nagasatyadheerajanumala/baton.git"
+  },
+  "keywords": [
+    "cli",
+    "coding-agent",
+    "llm",
+    "openai",
+    "anthropic",
+    "claude",
+    "failover"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "openai": "^7.23.0"

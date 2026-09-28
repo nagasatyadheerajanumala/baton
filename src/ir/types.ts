@@ -35,7 +35,25 @@ export interface ToolResultBlock {
   isError?: boolean;
 }
 
-export type ContentBlock = TextBlock | ToolCallBlock | ToolResultBlock;
+/**
+ * Opaque, model-bound reasoning state (Anthropic `thinking`/`redacted_thinking`
+ * blocks with signatures, OpenAI Responses `reasoning` items with
+ * encrypted_content). Both vendors require these to be sent back unchanged
+ * within a tool-use loop, or reasoning is silently dropped mid-task.
+ *
+ * Only the adapter whose `origin` matches may emit it; every other adapter
+ * skips it. That is what makes cross-provider switches safe: the new model
+ * never sees another model's encrypted reasoning.
+ */
+export interface ReasoningBlock {
+  type: 'reasoning';
+  /** `${protocol}:${model}`, e.g. "anthropic:claude-opus-5-5". */
+  origin: string;
+  /** The vendor's raw block/item, round-tripped verbatim. */
+  data: unknown;
+}
+
+export type ContentBlock = TextBlock | ToolCallBlock | ToolResultBlock | ReasoningBlock;
 
 export interface MessageMeta {
   /** Which provider/model produced an assistant message. */
@@ -82,3 +100,6 @@ export interface AssistantTurn {
 export const isToolCall = (b: ContentBlock): b is ToolCallBlock => b.type === 'tool_call';
 export const isToolResult = (b: ContentBlock): b is ToolResultBlock => b.type === 'tool_result';
 export const isText = (b: ContentBlock): b is TextBlock => b.type === 'text';
+export const isReasoning = (b: ContentBlock): b is ReasoningBlock => b.type === 'reasoning';
+
+export const reasoningOrigin = (protocol: string, model: string) => `${protocol}:${model}`;

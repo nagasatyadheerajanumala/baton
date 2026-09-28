@@ -1,15 +1,15 @@
 {
   "approval": "ask",
   "providers": {
-    "openai":     { "type": "openai",    "apiKeyEnv": "OPENAI_API_KEY" },
-    "anthropic":  { "type": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-    "openrouter": { "type": "openai",    "apiKeyEnv": "OPENROUTER_API_KEY", "baseURL": "https://openrouter.ai/api/v1" },
-    "ollama":     { "type": "openai",    "apiKey": "ollama", "baseURL": "http://localhost:11434/v1" }
+    "openai":     { "type": "openai",            "apiKeyEnv": "OPENAI_API_KEY" },
+    "anthropic":  { "type": "anthropic",         "apiKeyEnv": "ANTHROPIC_API_KEY" },
+    "openrouter": { "type": "openai-compatible", "apiKeyEnv": "OPENROUTER_API_KEY", "baseURL": "https://openrouter.ai/api/v1" },
+    "ollama":     { "type": "openai-compatible", "baseURL": "http://localhost:11434/v1" }
   },
   "chain": [
-    { "provider": "openai",     "model": "gpt-5",                     "contextWindow": 272000, "maxOutputTokens": 16000 },
-    { "provider": "anthropic",  "model": "claude-sonnet-5",           "contextWindow": 200000, "maxOutputTokens": 16000 },
-    { "provider": "openrouter", "model": "anthropic/claude-sonnet-5", "contextWindow": 200000 },
-    { "provider": "ollama",     "model": "qwen2.5-coder:32b",         "contextWindow": 32000,  "maxOutputTokens": 4096 }
+    { "provider": "openai",     "model": "gpt-6-sol",                   "contextWindow": 922000,  "maxOutputTokens": 32000 },
+    { "provider": "anthropic",  "model": "claude-sonnet-5-5",           "contextWindow": 1000000, "maxOutputTokens": 32000 },
+    { "provider": "openrouter", "model": "anthropic/claude-sonnet-5-5", "contextWindow": 1000000, "maxOutputTokens": 32000 },
+    { "provider": "ollama",     "model": "qwen2.5-coder:32b",           "contextWindow": 32000,   "maxOutputTokens": 4096 }
   ]
 }

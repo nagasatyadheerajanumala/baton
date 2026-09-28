@@ -140,7 +140,7 @@ function handleCommand(input: string, agent: Agent): boolean {
         router.chain.forEach((t, i) => {
           const cur = t === router.current ? c.green('●') : ' ';
           const cd = router.cooldownRemaining(t);
-          const cool = cd === 0 ? '' : c.yellow(Number.isFinite(cd) ? ` (cooling down ${Math.ceil(cd / 1000)}s)` : ' (disabled: auth)');
+          const cool = cd === 0 ? '' : c.yellow(Number.isFinite(cd) ? ` (cooling down ${Math.ceil(cd / 1000)}s)` : ' (disabled: bad key or model id — run baton doctor)');
           stdout.write(`${cur} ${i}  ${targetLabel(t)}  ${c.dim(`${(t.contextWindow / 1000).toFixed(0)}k ctx`)}${cool}\n`);
         });
       }

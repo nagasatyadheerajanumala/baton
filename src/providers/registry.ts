@@ -1,7 +1,28 @@
-import { type Config, resolveApiKey } from '../config/config.js';
+import { type Config, type ProviderConfig, resolveApiKey } from '../config/config.js';
+import type { AssistantTurn } from '../ir/types.js';
 import { AnthropicAdapter } from './anthropic.js';
-import { OpenAIAdapter } from './openai.js';
+import { OpenAIChatAdapter } from './openai.js';
+import { OpenAIResponsesAdapter } from './openai-responses.js';
 import type { ProviderAdapter } from './types.js';
+
+/**
+ * Stands in for a provider whose API key isn't set. Constructing the real SDK
+ * client would throw (OpenAI) or fail later with an unclassifiable error
+ * (Anthropic); instead every call fails as an auth error, so the router skips
+ * this target and the rest of the chain keeps working.
+ */
+export class MissingKeyAdapter implements ProviderAdapter {
+  constructor(
+    readonly name: string,
+    readonly envName: string,
+  ) {}
+  async complete(): Promise<AssistantTurn> {
+    throw Object.assign(new Error(`No API key for "${this.name}": ${this.envName} is not set`), { status: 401 });
+  }
+}
+
+export const keyEnvName = (name: string, p: ProviderConfig) =>
+  p.apiKeyEnv ?? (p.type === 'anthropic' ? 'ANTHROPIC_API_KEY' : p.type === 'openai' ? 'OPENAI_API_KEY' : `${name.toUpperCase()}_API_KEY`);
 
 /** Instantiate one adapter per configured provider that the chain uses. */
 export function buildAdapters(config: Config, env: NodeJS.ProcessEnv = process.env): Map<string, ProviderAdapter> {
@@ -10,11 +31,19 @@ export function buildAdapters(config: Config, env: NodeJS.ProcessEnv = process.e
   for (const name of used) {
     const p = config.providers[name]!;
     const apiKey = resolveApiKey(p, env);
+    // Local OpenAI-compatible servers (Ollama, vLLM) usually need no key.
+    if (!apiKey && p.type !== 'openai-compatible') {
+      adapters.set(name, new MissingKeyAdapter(name, keyEnvName(name, p)));
+      continue;
+    }
+    const common = { name, apiKey, baseURL: p.baseURL, headers: p.headers };
     adapters.set(
       name,
       p.type === 'anthropic'
-        ? new AnthropicAdapter({ name, apiKey, baseURL: p.baseURL })
-        : new OpenAIAdapter({ name, apiKey, baseURL: p.baseURL, maxTokensParam: p.maxTokensParam, headers: p.headers }),
+        ? new AnthropicAdapter(common)
+        : p.type === 'openai'
+          ? new OpenAIResponsesAdapter({ ...common, reasoningEffort: p.reasoningEffort })
+          : new OpenAIChatAdapter({ ...common, maxTokensParam: p.maxTokensParam }),
     );
   }
   return adapters;

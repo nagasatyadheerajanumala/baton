@@ -42,7 +42,8 @@ export function estimateTokens(messages: Message[]): number {
       blocks++;
       if (b.type === 'text') chars += b.text.length;
       else if (b.type === 'tool_call') chars += b.name.length + JSON.stringify(b.input).length;
-      else chars += b.content.length;
+      else if (b.type === 'tool_result') chars += b.content.length;
+      else chars += JSON.stringify(b.data).length / 4; // mostly signature; vendors bill only what they keep
     }
   }
   return Math.ceil(chars / CHARS_PER_TOKEN) + blocks * PER_BLOCK_OVERHEAD;

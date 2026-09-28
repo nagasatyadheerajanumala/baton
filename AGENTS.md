@@ -14,14 +14,17 @@ Coding-agent harness that hot-swaps LLM providers mid-session (e.g. OpenAI → C
 src/
   ir/          types.ts: the IR (vendor-neutral messages); session.ts: JSONL log, settle(), derived views
   providers/   one adapter per wire protocol; ONLY place vendor formats exist
-    anthropic.ts   Messages API (streaming, prompt caching)
-    openai.ts      Chat Completions: covers OpenAI, OpenRouter, LiteLLM, Ollama via baseURL
+    anthropic.ts         Messages API (streaming, prompt caching, thinking replay)
+    openai-responses.ts  Responses API for api.openai.com (stateless, encrypted reasoning replay)
+    openai.ts            Chat Completions for OpenAI-compatible servers (OpenRouter, LiteLLM, Ollama)
+    registry.ts          config -> adapters; MissingKeyAdapter for providers without a key
   router/      errors.ts: SDK error -> FailureKind; router.ts: retry / compact / failover policy
   compaction/  deterministic, produces a *view*; never rewrites the session log
   tools/       vendor-agnostic tool engine (fs, search, bash, git_status) + approval gate
   agent/       loop.ts: model -> tools -> model; handoff note on provider switch
   ui/          readline REPL + terminal event printer
-  config/      baton.config.json > ~/.baton/config.json > env-derived chain
+  config/      baton.config.json > ~/.baton/config.json > env-derived chain; DEFAULT_MODELS
+  doctor.ts    `baton doctor`: real two-step tool loop per chain entry, plain-language diagnosis
 ```
 
 ## Invariants (don't break these)
@@ -32,10 +35,13 @@ src/
 4. **Tool ids are kept verbatim in the IR** and sanitized deterministically on the way out (`sanitizeToolId`), so call/result pairs always agree.
 5. **`fatal` errors are never masked by failover.** A malformed request would fail on every provider; surface it.
 6. **The router is sticky.** After failover it stays on the new target; switching back is explicit (`/model`).
+7. **Reasoning blocks are model-bound.** `reasoning` IR blocks carry `origin = protocol:model`; only the adapter calling that exact model emits them, verbatim and in original order. Anthropic and OpenAI both require them within a tool loop (Anthropic silently disables thinking otherwise).
+8. **A missing API key never crashes startup.** It becomes a `MissingKeyAdapter` that fails as `auth`, so failover skips it.
 
 ## Design decisions
 
 - TypeScript/Node, official SDKs, minimal deps (no CLI framework; `node:util` parseArgs, `node:readline`).
-- Chat Completions instead of the Responses API: one adapter serves four provider slots.
+- OpenAI itself goes through the Responses API: current OpenAI reasoning models only allow function calling on Chat Completions with reasoning off. Chat Completions remains the adapter for OpenAI-compatible servers.
+- Default model ids live in `DEFAULT_MODELS` (src/config/config.ts), checked against provider docs 2026-09-28.
 - Compaction is deterministic for now (stale reads → head/tail truncation → drop middle turns with a state summary). LLM summarization can slot in as a pass between truncation and drop, and must not run on the failover path itself.
 - Subscription/OAuth auth (reusing Claude/ChatGPT plan logins) is **deliberately not implemented**; check provider terms before adding it. It would be an auth option on an existing adapter, not a new adapter.

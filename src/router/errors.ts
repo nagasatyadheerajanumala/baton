@@ -11,6 +11,7 @@ export type FailureKind =
   | 'overloaded' //   5xx / 529; provider-side trouble
   | 'context_length' // request too big for this model; compact and retry
   | 'auth' //         bad or missing key; never retry this target
+  | 'model_not_found' // wrong or retired model id; never retry this target
   | 'network' //      could not reach the endpoint
   | 'aborted' //      user pressed Ctrl-C
   | 'fatal'; //       a bug or invalid request; surface it, don't mask it by failing over
@@ -34,6 +35,7 @@ interface ErrorLike {
 
 const QUOTA_RE = /insufficient_quota|exceeded your current quota|credit balance|insufficient credits|billing|usage limit|quota exceeded|out of credits/i;
 const CONTEXT_RE = /context.length|context_length_exceeded|prompt is too long|maximum context|too many tokens|request_too_large|input is too long|reduce the length/i;
+const MODEL_RE = /model_not_found|model[^.]{0,80}(not found|does not exist|not exist|is not available|unknown)|not_found_error.*model|invalid model/i;
 const NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
 
 export function classifyError(err: unknown): Classified {
@@ -53,6 +55,7 @@ export function classifyError(err: unknown): Classified {
   }
 
   if (status === 401 || status === 403) return { kind: 'auth', ...base };
+  if ((status === 404 || status === 400) && MODEL_RE.test(text)) return { kind: 'model_not_found', ...base };
   if (status === 402) return { kind: 'quota', ...base }; // OpenRouter: out of credits
   if (status === 413 || CONTEXT_RE.test(text)) return { kind: 'context_length', ...base };
   if (QUOTA_RE.test(text)) return { kind: 'quota', retryAfterMs: retryAfter(e.headers), ...base };

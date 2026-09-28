@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Agent } from '../src/agent/loop.js';
 import { Session } from '../src/ir/session.js';
 import { AnthropicAdapter } from '../src/providers/anthropic.js';
-import { OpenAIAdapter } from '../src/providers/openai.js';
+import { OpenAIChatAdapter } from '../src/providers/openai.js';
 import type { ProviderAdapter } from '../src/providers/types.js';
 import { Router } from '../src/router/router.js';
 import { ToolEngine } from '../src/tools/registry.js';
@@ -99,7 +99,7 @@ describe('real SDKs over the wire', () => {
     );
 
     const adapters = new Map<string, ProviderAdapter>([
-      ['openai', new OpenAIAdapter({ name: 'openai', apiKey: 'sk-test', baseURL: `${base}/v1`, maxTokensParam: 'max_completion_tokens' })],
+      ['openai', new OpenAIChatAdapter({ name: 'openai', apiKey: 'sk-test', baseURL: `${base}/v1`, maxTokensParam: 'max_completion_tokens' })],
       ['anthropic', new AnthropicAdapter({ name: 'anthropic', apiKey: 'sk-ant-test', baseURL: base })],
     ]);
     const router = new Router(

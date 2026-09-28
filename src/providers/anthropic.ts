@@ -1,11 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { AssistantTurn, ContentBlock, Message, StopReason, ToolSpec } from '../ir/types.js';
+import { type AssistantTurn, type ContentBlock, type Message, type StopReason, type ToolSpec, reasoningOrigin } from '../ir/types.js';
 import { type CompletionRequest, type ProviderAdapter, sanitizeToolId } from './types.js';
+
+const PROTOCOL = 'anthropic';
 
 export interface AnthropicAdapterOptions {
   name: string;
   apiKey?: string;
   baseURL?: string;
+  headers?: Record<string, string>;
 }
 
 export class AnthropicAdapter implements ProviderAdapter {
@@ -15,7 +18,7 @@ export class AnthropicAdapter implements ProviderAdapter {
   constructor(opts: AnthropicAdapterOptions) {
     this.name = opts.name;
     // maxRetries: 0 — the router owns retry/failover policy, not the SDK.
-    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseURL, maxRetries: 0 });
+    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseURL, defaultHeaders: opts.headers, maxRetries: 0 });
   }
 
   async complete(req: CompletionRequest): Promise<AssistantTurn> {
@@ -24,7 +27,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         model: req.model,
         max_tokens: req.maxTokens,
         system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
-        messages: toAnthropicMessages(req.messages),
+        messages: toAnthropicMessages(req.messages, req.model),
         tools: req.tools.map(toAnthropicTool),
       },
       { signal: req.signal },
@@ -32,7 +35,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (req.onText) stream.on('text', req.onText);
     const final = await stream.finalMessage();
     return {
-      content: fromAnthropicContent(final.content),
+      content: fromAnthropicContent(final.content, req.model),
       stopReason: mapStop(final.stop_reason),
       usage: { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens },
     };
@@ -41,10 +44,17 @@ export class AnthropicAdapter implements ProviderAdapter {
 
 // ---- Pure translations (exported for tests) --------------------------------
 
-export function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
+/**
+ * @param model the model being called; thinking blocks are only replayed to
+ *   the exact model that produced them (signatures are model-bound).
+ */
+export function toAnthropicMessages(messages: Message[], model = ''): Anthropic.MessageParam[] {
+  const origin = reasoningOrigin(PROTOCOL, model);
   const out: Anthropic.MessageParam[] = [];
   for (const m of messages) {
-    const blocks = m.content.map(toAnthropicBlock).filter((b): b is Anthropic.ContentBlockParam => b !== null);
+    const blocks = m.content
+      .map((b) => toAnthropicBlock(b, origin))
+      .filter((b): b is Anthropic.ContentBlockParam => b !== null);
     if (blocks.length === 0) continue;
     const prev = out[out.length - 1];
     if (prev && prev.role === m.role && Array.isArray(prev.content)) {
@@ -70,8 +80,10 @@ export function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam
   return out;
 }
 
-function toAnthropicBlock(b: ContentBlock): Anthropic.ContentBlockParam | null {
+function toAnthropicBlock(b: ContentBlock, origin: string): Anthropic.ContentBlockParam | null {
   switch (b.type) {
+    case 'reasoning':
+      return b.origin === origin ? (b.data as Anthropic.ContentBlockParam) : null;
     case 'text':
       return b.text.trim() ? { type: 'text', text: b.text } : null;
     case 'tool_call':
@@ -86,14 +98,20 @@ function toAnthropicBlock(b: ContentBlock): Anthropic.ContentBlockParam | null {
   }
 }
 
-export function fromAnthropicContent(content: Anthropic.ContentBlock[]): ContentBlock[] {
+export function fromAnthropicContent(content: Anthropic.ContentBlock[], model = ''): ContentBlock[] {
+  const origin = reasoningOrigin(PROTOCOL, model);
   const out: ContentBlock[] = [];
   for (const b of content) {
     if (b.type === 'text') out.push({ type: 'text', text: b.text });
     else if (b.type === 'tool_use') {
       out.push({ type: 'tool_call', id: b.id, name: b.name, input: (b.input ?? {}) as Record<string, unknown> });
+    } else if (b.type === 'thinking') {
+      // Claude 5.x thinks by default; the API requires these back, unmodified, within a tool loop.
+      out.push({ type: 'reasoning', origin, data: { type: 'thinking', thinking: b.thinking, signature: b.signature } });
+    } else if (b.type === 'redacted_thinking') {
+      out.push({ type: 'reasoning', origin, data: { type: 'redacted_thinking', data: b.data } });
     }
-    // thinking / server-tool blocks are provider-bound and intentionally dropped.
+    // Server-tool blocks are not used by baton.
   }
   return out;
 }
