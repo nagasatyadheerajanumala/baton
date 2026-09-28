@@ -97,6 +97,7 @@ const VERBS: Record<string, string> = {
   process_kill: 'stop',
   process_list: 'procs',
   git_status: 'git',
+  skill: 'skill',
 };
 
 /** mcp__linear__create_issue -> { server: 'linear', tool: 'create_issue' } */
@@ -129,6 +130,8 @@ export function toolLabel(call: ToolCallBlock): { verb: string; detail: string }
       return { verb, detail: `#${String(i.id ?? '?')}` };
     case 'git_status':
       return { verb, detail: 'status' };
+    case 'skill':
+      return { verb, detail: String(i.name ?? '') };
     default:
       return { verb, detail: '' };
   }

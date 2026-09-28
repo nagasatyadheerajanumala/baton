@@ -1,4 +1,5 @@
 import type { ToolCallBlock, ToolSpec } from '../ir/types.js';
+import type { HookRunner } from '../agent/hooks.js';
 import type { ProcessManager } from './processes.js';
 
 export interface ToolContext {
@@ -13,6 +14,8 @@ export interface ToolContext {
   processes: ProcessManager;
   /** Plan mode: anything that changes something is refused, for every provider. */
   planMode?: () => boolean;
+  /** User/project hooks (Claude Code format) around every tool call. */
+  hooks?: HookRunner;
 }
 
 export interface ToolOutput {

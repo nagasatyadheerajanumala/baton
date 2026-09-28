@@ -1,6 +1,6 @@
 import type { ToolCallBlock, ToolResultBlock, ToolSpec } from '../ir/types.js';
 import { editFileTool, listFilesTool, readFileTool, searchTool, writeFileTool } from './fs.js';
-import { bashTool, gitStatusTool, processKillTool, processListTool, processOutputTool } from './shell.js';
+import { bashTool, gitStatusTool, processKillTool, processListTool, processOutputTool, skillTool } from './shell.js';
 import { isReadOnlyCommand } from './readonly.js';
 import { type Tool, type ToolContext, ToolInputError } from './types.js';
 
@@ -15,6 +15,7 @@ export const DEFAULT_TOOLS: Tool[] = [
   processKillTool,
   processListTool,
   gitStatusTool,
+  skillTool,
 ];
 
 /**
@@ -62,13 +63,18 @@ export class ToolEngine {
     if (tool.mutates && !needsNoApproval(call) && ctx.planMode?.()) {
       return result(PLAN_MODE_REFUSAL, true);
     }
-    if (tool.mutates && !needsNoApproval(call) && !(await ctx.approve(tool.describe(call.input), call))) {
+    const pre = ctx.hooks ? await ctx.hooks.preToolUse(call) : undefined;
+    if (pre?.block) return result(`A hook blocked this ${call.name} call: ${pre.block}`, true);
+    if (tool.mutates && !needsNoApproval(call) && !pre?.allow && !(await ctx.approve(tool.describe(call.input), call))) {
       return result('The user denied this action. Ask them how to proceed or try a different approach.', true);
     }
 
     try {
       const out = await tool.execute(call.input, ctx);
-      return result(out.content, out.isError);
+      const done = result(out.content, out.isError);
+      const post = ctx.hooks ? await ctx.hooks.postToolUse(call, done) : undefined;
+      const feedback = [post?.block, ...(post?.context ?? [])].filter(Boolean);
+      return feedback.length ? { ...done, content: `${done.content}\n\n[hook feedback] ${feedback.join('\n')}` } : done;
     } catch (err) {
       if (err instanceof ToolInputError) return result(`Invalid input: ${err.message}`, true);
       const e = err as NodeJS.ErrnoException;

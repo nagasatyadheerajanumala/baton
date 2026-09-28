@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { HooksConfig } from '../agent/hooks.js';
 import type { McpServerConfig } from '../mcp/client.js';
 import type { Price } from '../pricing.js';
 import { codexModels, modelCatalog } from './models.js';
@@ -50,6 +51,8 @@ export interface Config {
   mcpImport?: { codex?: boolean; claude?: boolean };
   /** Discovered servers to leave out of baton (they stay configured in Codex / Claude Code). */
   mcpExclude?: string[];
+  /** Hooks in Claude Code's format (merged with ~/.claude/settings.json hooks). */
+  hooks?: HooksConfig;
   /** Failover order. The first entry is the starting model. */
   chain: TargetConfig[];
   approval?: ApprovalMode;

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { loadSkills, parseFrontmatter } from '../agent/extensions.js';
 import { headTail } from '../compaction/compact.js';
 import { formatDuration, statusLabel } from './processes.js';
 import { runProcess } from './process.js';
@@ -148,3 +150,22 @@ export async function gitSnapshot(cwd: string, signal?: AbortSignal): Promise<st
   const diffstat = stat?.code === 0 && stat.output.trim() ? `\n\n${stat.output.trimEnd()}` : '';
   return status.output.trimEnd() + diffstat;
 }
+
+/** Loads a user skill's full instructions on demand (the list is in the system prompt). */
+export const skillTool: Tool = {
+  mutates: false,
+  spec: {
+    name: 'skill',
+    description: "Load the full instructions of one of the user's installed skills (listed under Skills in your instructions). Call this before doing a task a skill covers, then follow what it says.",
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Skill name, exactly as listed.' } }, required: ['name'] },
+  },
+  describe: (i) => `load skill ${String(i.name)}`,
+  async execute(input, ctx) {
+    const name = str(input, 'name');
+    const skills = loadSkills(ctx.cwd);
+    const skill = skills.find((s) => s.name === name) ?? skills.find((s) => s.name.toLowerCase() === name.toLowerCase());
+    if (!skill) return { content: `No skill named "${name}". Available: ${skills.map((s) => s.name).join(', ') || 'none'}`, isError: true };
+    const { body } = parseFrontmatter(readFileSync(skill.path, 'utf8'));
+    return { content: `Skill "${skill.name}" (base directory: ${skill.dir}; relative paths in it resolve there).\n\n${body.trim()}` };
+  },
+};

@@ -3,11 +3,13 @@ import { type Session, newMessage, touchedFiles } from '../ir/session.js';
 import { type ToolCallBlock, type ToolResultBlock, isToolCall } from '../ir/types.js';
 import { ToolBridge } from '../mcp/bridge.js';
 import type { McpManager } from '../mcp/client.js';
+import type { HookRunner } from './hooks.js';
 import type { Classified } from '../router/errors.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
 import { gitSnapshot } from '../tools/shell.js';
 import { ProcessManager, formatDuration } from '../tools/processes.js';
 import type { ToolEngine } from '../tools/registry.js';
+import { loadSkills, skillsPrompt } from './extensions.js';
 import { instructionsPrompt, loadInstructions } from './instructions.js';
 import { buildSystemPrompt } from './prompt.js';
 
@@ -30,6 +32,8 @@ export interface AgentOptions {
   mcp?: McpManager;
   /** True while the user has plan mode on. */
   planMode?: () => boolean;
+  /** Hooks (Claude Code format) around prompts, tools and stopping. */
+  hooks?: HookRunner;
   /** Hard stop on runaway tool loops. */
   maxSteps?: number;
 }
@@ -62,26 +66,48 @@ export class Agent {
     this.session.push(newMessage('user', [{ type: 'text', text: `[note from baton] ${text}` }], { synthetic: true }));
   }
 
+  get hooks(): HookRunner | undefined {
+    return this.opts.hooks;
+  }
+
   get mcp(): McpManager | undefined {
     return this.opts.mcp;
   }
 
   /** Stop the MCP bridge and disconnect MCP servers. */
   async close(): Promise<void> {
+    await this.opts.hooks?.run('SessionEnd', { reason: 'exit' }).catch(() => undefined);
     await this.bridge?.stop();
     await this.opts.mcp?.close();
   }
 
   /** Run one human turn to completion: model -> tools -> model ... -> final answer. */
+  private sessionStarted = false;
+
   async run(userText: string, events: AgentEvents = {}, signal?: AbortSignal): Promise<void> {
-    this.session.push(newMessage('user', [{ type: 'text', text: userText }]));
+    const hooks = this.opts.hooks;
+    const extra: string[] = [];
+    if (hooks && !this.sessionStarted) {
+      this.sessionStarted = true;
+      extra.push(...(await hooks.run('SessionStart', { source: this.session.messages.length ? 'resume' : 'startup' })).context);
+    }
+    if (hooks) {
+      const submit = await hooks.run('UserPromptSubmit', { prompt: userText });
+      if (submit.block) {
+        events.onNotice?.(`A hook blocked this message: ${submit.block}`);
+        return;
+      }
+      extra.push(...submit.context);
+    }
+    const text = extra.length ? `${userText}\n\n<hook-context>\n${extra.join('\n')}\n</hook-context>` : userText;
+    this.session.push(newMessage('user', [{ type: 'text', text }]));
     const maxSteps = this.opts.maxSteps ?? 50;
     // Agent CLIs run their own loop and call baton's tools through the bridge;
     // it records each step into this session as it happens.
     this.bridge?.attach({
       session: this.session,
       events,
-      ctx: { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode },
+      ctx: { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode, hooks: this.opts.hooks },
       producer: () => ({ provider: this.router.current.provider, model: this.router.current.model }),
     });
     try {
@@ -92,6 +118,7 @@ export class Agent {
   }
 
   private async loop(maxSteps: number, events: AgentEvents, signal?: AbortSignal): Promise<void> {
+    let stopRetries = 0;
     for (let step = 0; step < maxSteps; step++) {
       const { turn, target } = await this.router.complete(
         (t, scale) => this.prepare(t, scale, events),
@@ -119,6 +146,16 @@ export class Agent {
       const calls = turn.content.filter(isToolCall);
       if (calls.length === 0) {
         if (turn.stopReason === 'max_tokens') events.onNotice?.('Response hit the output token limit.');
+        // A Stop hook can send the model back to work (e.g. "tests still failing"), a few times at most.
+        if (this.opts.hooks && stopRetries < 3) {
+          const stop = await this.opts.hooks.run('Stop', { stop_hook_active: stopRetries > 0 });
+          if (stop.block) {
+            stopRetries++;
+            events.onNotice?.(`A Stop hook asked to keep going: ${stop.block.split('\n')[0]}`);
+            this.session.push(newMessage('user', [{ type: 'text', text: `[hook] Not done yet: ${stop.block}` }], { synthetic: true }));
+            continue;
+          }
+        }
         return;
       }
 
@@ -130,7 +167,7 @@ export class Agent {
           continue;
         }
         events.onToolStart?.(call, this.tools.describe(call));
-        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode });
+        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode, hooks: this.opts.hooks });
         events.onToolEnd?.(call, result);
         results.push(result);
       }
@@ -145,7 +182,7 @@ export class Agent {
     const plan = this.opts.planMode?.()
       ? '\n\n# Plan mode is ON\nDo not change anything: no file edits, no commands with side effects. Research with read-only tools, then reply with a concise, numbered implementation plan (files to touch, what changes, how you will verify) and stop. The user will approve before you implement.'
       : '';
-    const system = buildSystemPrompt(this.opts.cwd) + instructionsPrompt(loadInstructions(this.opts.cwd)) + plan + (await this.handoffNote(target));
+    const system = buildSystemPrompt(this.opts.cwd) + instructionsPrompt(loadInstructions(this.opts.cwd)) + skillsPrompt(loadSkills(this.opts.cwd)) + plan + (await this.handoffNote(target));
     const toolTokens = estimateTextTokens(JSON.stringify(this.tools.specs));
     const budget = Math.floor(
       ((target.contextWindow - target.maxOutputTokens) * SAFETY - estimateTextTokens(system) - toolTokens) * budgetScale,

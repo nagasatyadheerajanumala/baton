@@ -7,6 +7,7 @@ import { type ApprovalMode, configPaths, loadConfig, starterConfig, toTargets } 
 import { runDoctor } from './doctor.js';
 import { discoverServers, runMcpCommand } from './mcp/cli.js';
 import { McpManager } from './mcp/client.js';
+import { HookRunner, isTrusted, loadHookSources, transcriptPathFor } from './agent/hooks.js';
 import { Session } from './ir/session.js';
 import { MissingKeyAdapter, buildAdapters } from './providers/registry.js';
 import { Router, targetLabel } from './router/router.js';
@@ -123,6 +124,10 @@ async function main(): Promise<number> {
     for (const c of await discoverServers(session.cwd, config)) mcp.add(c.name, c.config, c.source === 'codex' ? 'codex' : 'claude');
     await mcp.connectAll();
   };
+  const hooks = new HookRunner(session.cwd, session.id, transcriptPathFor(session.id), loadHookSources(session.cwd, config.hooks), isTrusted(session.cwd));
+  const hookWarning = hooks.untrustedProjectHooks.length
+    ? `This project defines hooks in ${hooks.untrustedProjectHooks.map((s) => s.label).join(', ')} (commands that run automatically). They're off until you run /trust here; /hooks shows them.`
+    : undefined;
   const mcpSummary = () => {
     const s = mcp.servers;
     const ok = s.filter((x) => x.status === 'connected');
@@ -144,7 +149,9 @@ async function main(): Promise<number> {
       return 1;
     }
     await loadMcp();
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => undefined), planMode: () => approval === 'plan' });
+    hooks.on('notice', (m: string) => process.stderr.write(`${m}\n`));
+    if (hookWarning) process.stderr.write(`${hookWarning}\n`);
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, hooks, approve: makeApprover(approval, () => undefined), planMode: () => approval === 'plan' });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
     await agent.run(prompt, terminalEvents(), controller.signal).finally(() => agent.close());
@@ -160,7 +167,9 @@ async function main(): Promise<number> {
     const { TuiStore } = await import('./ui/tui/store.js');
     const { runTui } = await import('./ui/tui/run.js');
     const store = new TuiStore(session.cwd, approval);
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve, planMode: () => store.approvalMode === 'plan' });
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, hooks, approve: store.approve, planMode: () => store.approvalMode === 'plan' });
+    hooks.on('notice', (m: string) => store.push({ kind: 'notice', level: 'warn', text: m }));
+    if (hookWarning) store.push({ kind: 'notice', level: 'warn', text: hookWarning });
     // Servers connect in the background; tools appear as each one is ready.
     // Servers connect in the background; tools appear as each one is ready.
     void loadMcp().then(() => {
@@ -175,7 +184,9 @@ async function main(): Promise<number> {
   const rl = createRl();
   await loadMcp();
   if (mcp.servers.length) console.log(mcpSummary());
-  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => rl), planMode: () => approval === 'plan' });
+  hooks.on('notice', (m: string) => console.error(m));
+  if (hookWarning) console.error(hookWarning);
+  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, hooks, approve: makeApprover(approval, () => rl), planMode: () => approval === 'plan' });
   await runRepl(agent, rl, source);
   rl.close();
   await agent.close();

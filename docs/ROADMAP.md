@@ -89,8 +89,8 @@ Competitor columns reflect their public docs as of September 2026. **Status:** `
 | Feature | Claude Code | Codex CLI | baton |
 |---|---|---|---|
 | MCP client (stdio + HTTP servers) | yes | yes | built: stdio/http/sse, OAuth sign-in, import from Codex and Claude Code, tools shared by every model |
-| Custom slash commands / prompts | yes | yes | P1 (reads `.claude/commands` and Codex prompts too) |
-| Skills | yes | yes | P1 (same `SKILL.md` format, so existing skills work) |
+| Custom slash commands / prompts | yes | yes | built (reads `.claude/commands` and Codex prompts) |
+| Skills | yes | yes | built (same `SKILL.md` format; existing skills work) |
 | Hooks (before/after tool, on stop, on prompt) | yes | partial (notify) | P1 |
 | Subagents (isolated context, parallel work) | yes | partial | P2 |
 | Plugins / marketplace | yes | yes | P2 |

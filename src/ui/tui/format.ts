@@ -48,7 +48,7 @@ export interface ConversationContext {
 
 const TOOL_NAMES: Record<string, string> = {
   read: 'Read', write: 'Write', edit: 'Edit', list: 'List', search: 'Search', bash: 'Shell',
-  output: 'Output', stop: 'Stop', procs: 'Processes', git: 'Git',
+  output: 'Output', stop: 'Stop', procs: 'Processes', git: 'Git', skill: 'Skill',
 };
 
 export function welcomeLines(w: number, version: string, instructions: string[] = []): string[] {

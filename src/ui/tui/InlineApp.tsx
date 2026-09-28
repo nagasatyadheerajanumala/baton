@@ -12,7 +12,9 @@ import { renderEntry, welcomeLines, wrap } from './format.js';
 import { INIT_PROMPT, loadInstructions } from '../../agent/instructions.js';
 import { Checkpoints, timeAgo } from '../../tools/checkpoints.js';
 import { acceptMention, expandMentions, fuzzyFiles, listProjectFiles, mentionAt } from './mentions.js';
-import { type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderMentions, renderPlanPrompt, renderRewind, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
+import { expandCommand, loadCommands, loadSkills, relativeToHome, skillPrompt } from '../../agent/extensions.js';
+import { runProcess } from '../../tools/process.js';
+import { BUILTIN_COMMANDS, type SlashItem, matchSlash, renderSlashMenu, type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderMentions, renderPlanPrompt, renderRewind, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
 import { POPULAR, type CatalogEntry, searchRegistry } from '../../mcp/catalog.js';
 import { importCandidates, saveServer, setExcluded } from '../../mcp/cli.js';
 import { loginToServer, mcpAuthDir } from '../../mcp/client.js';
@@ -76,6 +78,20 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     });
   }
   const mentionItems = mentionActive ? fuzzyFiles(files.current.list, mention!.query) : [];
+
+  // "/" menu: built-ins, your custom commands, and skills.
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashActive = /^\/\S*$/.test(editor.value) && !store.approval && !store.picker.open && !store.mcpPanel.open && !store.rewind.open && !store.planPrompt;
+  const slashItems: SlashItem[] = slashActive
+    ? matchSlash(
+        [
+          ...BUILTIN_COMMANDS,
+          ...loadCommands(agent.session.cwd).map((c) => ({ name: c.name, description: c.description, kind: 'command' as const, hint: c.argumentHint, takesArgs: Boolean(c.argumentHint) })),
+          ...loadSkills(agent.session.cwd).map((s) => ({ name: s.name, description: s.description, kind: 'skill' as const })),
+        ],
+        editor.value.slice(1),
+      )
+    : [];
   const w = Math.max(40, cols);
 
   useEffect(() => {
@@ -305,6 +321,21 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       if (text === '/clear') {
         process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
         return store.clear();
+      }
+      // Your custom commands and skills, run as /name [arguments].
+      const slash = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text);
+      if (slash && !BUILTIN_COMMANDS.some((b) => b.name === slash[1])) {
+        const [, name, args = ''] = slash;
+        const cmd = loadCommands(agent.session.cwd).find((c) => c.name === name);
+        if (cmd) {
+          void expandCommand(cmd, args, async (command) => (await runProcess('bash', ['-c', command], { cwd: agent.session.cwd, timeoutMs: 30_000 })).output).then((expanded) => {
+            const { prompt, attached } = expandMentions(expanded, agent.session.cwd);
+            runTurn(prompt, text, [{ path: relativeToHome(cmd.path), detail: 'custom command' }, ...attached]);
+          });
+          return;
+        }
+        const skill = loadSkills(agent.session.cwd).find((s) => s.name === name);
+        if (skill) return runTurn(skillPrompt(skill, args), text, [{ path: relativeToHome(skill.path), detail: 'skill' }]);
       }
       if (text.startsWith('/')) {
         const r = runCommand(text, agent, { configFile });
@@ -560,6 +591,25 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       return store.clear();
     }
 
+    // "/" menu takes arrows, tab and enter while it's showing.
+    if (slashActive && slashItems.length) {
+      const pick = slashItems[Math.min(slashIndex, slashItems.length - 1)]!;
+      if (key.upArrow) return setSlashIndex((i) => (i + slashItems.length - 1) % slashItems.length);
+      if (key.downArrow) return setSlashIndex((i) => (i + 1) % slashItems.length);
+      if (key.tab || (key.return && pick.takesArgs && editor.value !== `/${pick.name}`)) {
+        const value = `/${pick.name} `;
+        setEditor((s) => ({ ...s, value, cursor: value.length }));
+        setSlashIndex(0);
+        return;
+      }
+      if (key.return) {
+        const text = `/${pick.name}`;
+        setEditor((s) => ({ ...emptyEditor([...s.history, text].slice(-200)) }));
+        setSlashIndex(0);
+        return submit(text);
+      }
+    }
+
     // @file suggestions take the arrow keys, tab and enter while they're showing.
     if (mentionActive && mentionItems.length) {
       if (key.upArrow) return setMentionIndex((i) => (i + mentionItems.length - 1) % mentionItems.length);
@@ -576,6 +626,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     const r = editKey(editor, input, key);
     setEditor(r.state);
     if (mentionIndex) setMentionIndex(0);
+    if (slashIndex) setSlashIndex(0);
     if (!r.submit) return;
     // While working, plain messages queue up; commands like /model still act immediately.
     if (store.running && !r.submit.startsWith('/')) store.enqueue(r.submit);
@@ -632,11 +683,8 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     panel = renderInputBox(editor.value, editor.cursor, { width: w - 1, placeholder, busy: store.running });
   }
 
+  const slashLines = slashActive ? renderSlashMenu(slashItems, Math.min(slashIndex, Math.max(0, slashItems.length - 1)), w - 1) : [];
   const mentionLines = mentionActive ? renderMentions(mentionItems, Math.min(mentionIndex, Math.max(0, mentionItems.length - 1)), w - 1, files.current.loading && !files.current.list.length) : [];
-  const slashHint =
-    !store.approval && !store.picker.open && !store.mcpPanel.open && !procs.open && editor.value.startsWith('/') && !editor.value.includes(' ')
-      ? t.muted(`  ${['/model', '/mcp', '/init', '/memory', '/rewind', '/undo', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
-      : undefined;
 
   return (
     <>
@@ -648,7 +696,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         {store.running && !store.approval && <Text>{renderWorking({ spinner, elapsedMs: now - store.turnStartedAt, width: w - 1, queued: store.queue.length })}</Text>}
         {store.queue.length > 0 && <Text>{renderQueue(store.queue, w - 1).join('\n')}</Text>}
         <Text>{panel.join('\n')}</Text>
-        {mentionLines.length > 0 ? <Text>{mentionLines.join('\n')}</Text> : slashHint ? <Text>{slashHint}</Text> : <Text>{footer}</Text>}
+        {slashLines.length > 0 ? <Text>{slashLines.join('\n')}</Text> : mentionLines.length > 0 ? <Text>{mentionLines.join('\n')}</Text> : <Text>{footer}</Text>}
       </Box>
     </>
   );

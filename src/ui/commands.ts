@@ -2,6 +2,7 @@ import type { Agent } from '../agent/loop.js';
 import { compact, estimateTokens } from '../compaction/compact.js';
 import { touchedFiles } from '../ir/session.js';
 import { sessionCost } from '../pricing.js';
+import { loadCommands, loadSkills } from '../agent/extensions.js';
 import { loadInstructions } from '../agent/instructions.js';
 import { saveModelChoice } from '../config/config.js';
 import { MissingKeyAdapter } from '../providers/registry.js';
@@ -22,6 +23,8 @@ export const HELP = `Commands:
   /init                write or improve AGENTS.md for this project
   /memory              instruction files every model is following
   /rewind, /undo       restore files from before an earlier request
+  /skills              skills every model can use (run one as /name)
+  /hooks, /trust       hooks that run automatically; trust this project's hooks
   /status              session, token and cost info
   /compact [tokens]    preview what compaction would do for the current model
   /clear               clear the screen (history is kept)
@@ -79,8 +82,12 @@ export function runCommand(input: string, agent: Agent, opts: { configFile?: str
     case 'exit':
     case 'quit':
       return { output: '', exit: true };
-    case 'help':
-      return { output: HELP };
+    case 'help': {
+      const custom = loadCommands(agent.session.cwd);
+      const extra = custom.length ? `\n\nYour commands:\n${custom.map((x) => `  /${x.name}${x.argumentHint ? ` ${x.argumentHint}` : ''}  ${c.dim(x.description.slice(0, 80))}`).join('\n')}` : '';
+      const skills = loadSkills(agent.session.cwd).length;
+      return { output: `${HELP}${extra}${skills ? `\n\n${skills} skills installed: /skills lists them; run one as /name.` : ''}` };
+    }
     case 'clear':
       return { output: '', clear: true };
     case 'model': {
@@ -110,6 +117,40 @@ export function runCommand(input: string, agent: Agent, opts: { configFile?: str
       });
       lines.push('', c.dim('Switch with /model <name>, e.g. /model claude-sonnet-5-5'));
       return { output: lines.join('\n') };
+    }
+    case 'skills': {
+      const skills = loadSkills(agent.session.cwd);
+      if (!skills.length) return { output: 'No skills installed. baton reads ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and .claude/skills in the project.' };
+      const byOrigin = new Map<string, typeof skills>();
+      for (const s of skills) byOrigin.set(s.origin, [...(byOrigin.get(s.origin) ?? []), s]);
+      const where: Record<string, string> = { project: 'this project', claude: '~/.claude/skills', agents: '~/.agents/skills', codex: '~/.codex/skills', baton: '~/.baton/skills' };
+      const lines = [`${skills.length} skills; every model loads one when a task calls for it, or run one yourself as /name.`];
+      for (const [origin, list] of byOrigin) {
+        lines.push('', c.bold(where[origin] ?? origin));
+        for (const s of list) lines.push(`  ${s.name.padEnd(22)} ${c.dim(s.description.slice(0, 90))}`);
+      }
+      return { output: lines.join('\n') };
+    }
+    case 'hooks': {
+      const h = agent.hooks;
+      const sources = h?.allSources ?? [];
+      if (!sources.length) return { output: `No hooks configured. baton runs Claude Code-format hooks from ~/.claude/settings.json, baton's config ("hooks"), and (once trusted) this project's .claude/settings.json.` };
+      const lines: string[] = [];
+      for (const s of sources) {
+        const off = s.project && !h?.isTrusted;
+        lines.push(`${off ? c.yellow('○') : c.green('●')} ${c.bold(s.label)}${off ? c.yellow('  off until you /trust this folder') : ''}`);
+        for (const [event, groups] of Object.entries(s.hooks)) {
+          for (const g of groups ?? []) for (const cmd of g.hooks) lines.push(`    ${event}${g.matcher ? ` [${g.matcher}]` : ''}  ${c.dim(cmd.command.slice(0, 100))}`);
+        }
+      }
+      return { output: lines.join('\n') };
+    }
+    case 'trust': {
+      const h = agent.hooks;
+      if (!h) return { output: 'Hooks are not available here.' };
+      const off = arg === 'off';
+      h.setTrusted(!off);
+      return { output: off ? "This folder is no longer trusted; its project hooks won't run." : `Trusted this folder: its project hooks (${h.allSources.filter((s) => s.project).map((s) => s.label).join(', ') || 'none yet'}) will run. Undo with /trust off.` };
     }
     case 'memory': {
       const files = loadInstructions(agent.session.cwd);

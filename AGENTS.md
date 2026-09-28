@@ -38,6 +38,10 @@ src/
     checkpoints.ts per-request file snapshots in a private git dir (~/.baton/checkpoints/<hash>.git); /undo, /rewind
   agent/       loop.ts: model -> tools -> model; handoff note on provider switch (incl. running processes)
     instructions.ts  AGENTS.md / CLAUDE.md loading (+ @imports, dedupe) injected into every model's system prompt
+    extensions.ts    skills (SKILL.md: listed in the prompt, loaded via the `skill` tool or /name) and custom commands
+                     (.claude/commands, ~/.codex/prompts) with $ARGUMENTS/$1/!`shell`; frontmatter parser
+    hooks.ts         Claude Code-format hooks (PreToolUse/PostToolUse/UserPromptSubmit/Stop/SessionStart/End);
+                     project hooks only when the folder is trusted (~/.baton/trusted.json)
   pricing.ts   list prices + session cost estimate
   ui/
     commands.ts    slash commands shared by both UIs
@@ -79,6 +83,8 @@ src/
 
 16. **Checkpoints never touch the project's own repo.** They live in a separate GIT_DIR with the project as work tree; restore uses `read-tree -u --reset` after a "before rewind" snapshot, so every rewind is itself undoable. Never snapshot a home folder or `/`.
 17. **Plan mode is enforced in the tool engine**, not by prompting alone, so it holds for every provider including the CLIs (which call tools through the bridge).
+
+18. **A project's hooks never run until the folder is trusted** (`/trust`), and custom-command `` !`shell` `` only runs when the user invokes that command. Skills are never inlined wholesale into every request; only the name/description list is, and the `skill` tool loads one on demand.
 
 ## Design decisions
 

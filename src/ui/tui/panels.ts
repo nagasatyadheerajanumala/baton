@@ -427,3 +427,60 @@ export function renderMentions(items: string[], index: number, w: number, loadin
     t.muted(`    tab/enter insert ${glyph.sep} esc dismiss`),
   ];
 }
+
+// ---- Slash command menu ----------------------------------------------------------------
+
+export interface SlashItem {
+  name: string;
+  description: string;
+  kind: 'built-in' | 'command' | 'skill';
+  /** Shown after the name, e.g. "[focus]". */
+  hint?: string;
+  /** Needs arguments typed after it before running. */
+  takesArgs?: boolean;
+}
+
+export const BUILTIN_COMMANDS: SlashItem[] = [
+  { name: 'model', description: 'switch model or account', kind: 'built-in' },
+  { name: 'mcp', description: 'MCP servers: status, sign in, add more', kind: 'built-in' },
+  { name: 'init', description: 'write or improve AGENTS.md for this project', kind: 'built-in' },
+  { name: 'memory', description: 'instruction files every model follows', kind: 'built-in' },
+  { name: 'skills', description: 'skills every model can use', kind: 'built-in' },
+  { name: 'hooks', description: 'hooks that run automatically', kind: 'built-in' },
+  { name: 'trust', description: "let this project's own hooks run", kind: 'built-in' },
+  { name: 'undo', description: "undo the last request's file changes", kind: 'built-in' },
+  { name: 'rewind', description: 'restore files from an earlier point', kind: 'built-in' },
+  { name: 'status', description: 'session, usage and switches', kind: 'built-in' },
+  { name: 'compact', description: 'preview history compaction', kind: 'built-in' },
+  { name: 'clear', description: 'clear the screen', kind: 'built-in' },
+  { name: 'help', description: 'all commands and keys', kind: 'built-in' },
+  { name: 'exit', description: 'quit (session is saved)', kind: 'built-in' },
+];
+
+/** Matching commands: name prefix first, then name contains, then description contains. */
+export function matchSlash(items: SlashItem[], query: string, limit = 50): SlashItem[] {
+  const q = query.toLowerCase();
+  const rank = (i: SlashItem) => (i.name.toLowerCase().startsWith(q) ? 0 : i.name.toLowerCase().includes(q) ? 1 : i.description.toLowerCase().includes(q) ? 2 : 3);
+  return items
+    .map((i) => ({ i, r: rank(i) }))
+    .filter((x) => x.r < 3)
+    .sort((a, b) => a.r - b.r || (a.i.kind === 'built-in' ? 0 : 1) - (b.i.kind === 'built-in' ? 0 : 1) || a.i.name.localeCompare(b.i.name))
+    .slice(0, limit)
+    .map((x) => x.i);
+}
+
+export function renderSlashMenu(items: SlashItem[], index: number, w: number, visible = 8): string[] {
+  if (!items.length) return [t.muted('  no matching command')];
+  const start = Math.min(Math.max(0, index - visible + 1), Math.max(0, items.length - visible));
+  const shown = items.slice(start, start + visible);
+  const nw = Math.min(28, Math.max(...shown.map((i) => i.name.length + (i.hint ? i.hint.length + 1 : 0))) + 3);
+  const lines = shown.map((it, k) => {
+    const sel = start + k === index;
+    const label = `/${it.name}${it.hint ? ` ${it.hint}` : ''}`;
+    const tag = it.kind === 'built-in' ? '' : t.muted(`  ${it.kind}`);
+    return truncate(`  ${sel ? t.accent('❯') : ' '} ${sel ? t.bold(label.padEnd(nw)) : label.padEnd(nw)}${t.muted(it.description)}${tag}`, w);
+  });
+  const more = items.length > visible ? ` ${glyph.sep} ${index + 1}/${items.length}` : '';
+  lines.push(t.muted(`    ↑↓ choose ${glyph.sep} tab complete ${glyph.sep} enter run${more}`));
+  return lines;
+}
