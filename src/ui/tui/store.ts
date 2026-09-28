@@ -77,11 +77,12 @@ export function humanReason(kind: string, isPlan: boolean): string {
   }
 }
 
-export type ApprovalMode = 'ask' | 'auto-edit' | 'yolo';
+export type ApprovalMode = 'ask' | 'auto-edit' | 'plan' | 'yolo';
 
 export const MODE_LABELS: Record<ApprovalMode, string> = {
   ask: 'ask before edits and commands',
   'auto-edit': 'auto-approve file edits',
+  plan: 'plan mode: look, change nothing',
   yolo: 'full access: never ask',
 };
 
@@ -242,12 +243,16 @@ export class TuiStore extends EventEmitter {
     return n;
   }
 
+  /** shift+tab: ask → auto-edit → plan → ask. Full access is only entered deliberately (--yes, or "don't ask again" on a command). */
   cycleMode(): ApprovalMode {
-    const order: ApprovalMode[] = ['ask', 'auto-edit', 'yolo'];
-    this.approvalMode = order[(order.indexOf(this.approvalMode) + 1) % order.length]!;
+    const next: Record<ApprovalMode, ApprovalMode> = { ask: 'auto-edit', 'auto-edit': 'plan', plan: 'ask', yolo: 'ask' };
+    this.approvalMode = next[this.approvalMode];
     this.changed();
     return this.approvalMode;
   }
+
+  /** Shown after a plan-mode turn: implement the plan? */
+  planPrompt: { choice: number } | null = null;
 
   enqueue(text: string): void {
     this.queue.push(text);

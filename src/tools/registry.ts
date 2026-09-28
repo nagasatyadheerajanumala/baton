@@ -59,6 +59,9 @@ export class ToolEngine {
     const missing = (tool.spec.inputSchema.required ?? []).filter((k) => call.input[k] === undefined);
     if (missing.length) return result(`Missing required argument(s): ${missing.join(', ')}`, true);
 
+    if (tool.mutates && !needsNoApproval(call) && ctx.planMode?.()) {
+      return result(PLAN_MODE_REFUSAL, true);
+    }
     if (tool.mutates && !needsNoApproval(call) && !(await ctx.approve(tool.describe(call.input), call))) {
       return result('The user denied this action. Ask them how to proceed or try a different approach.', true);
     }
@@ -79,3 +82,6 @@ export class ToolEngine {
 export function needsNoApproval(call: ToolCallBlock): boolean {
   return call.name === 'bash' && call.input.background !== true && typeof call.input.command === 'string' && isReadOnlyCommand(call.input.command);
 }
+
+export const PLAN_MODE_REFUSAL =
+  'Plan mode is on, so nothing may be changed yet. Keep investigating with read-only tools (reading files, searching, read-only shell commands), then present a concise step-by-step plan and stop. The user will switch modes to let you implement it.';

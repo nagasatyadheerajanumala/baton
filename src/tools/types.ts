@@ -11,6 +11,8 @@ export interface ToolContext {
   approve: (summary: string, call?: ToolCallBlock) => Promise<boolean>;
   /** Shell commands the tools start; shown in the TUI process pane. */
   processes: ProcessManager;
+  /** Plan mode: anything that changes something is refused, for every provider. */
+  planMode?: () => boolean;
 }
 
 export interface ToolOutput {

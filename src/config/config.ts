@@ -40,7 +40,7 @@ export interface TargetConfig {
   pricing?: Price;
 }
 
-export type ApprovalMode = 'ask' | 'auto-edit' | 'yolo';
+export type ApprovalMode = 'ask' | 'auto-edit' | 'plan' | 'yolo';
 
 export interface Config {
   providers: Record<string, ProviderConfig>;

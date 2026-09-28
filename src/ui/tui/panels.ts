@@ -256,12 +256,13 @@ export function renderFooter(f: FooterInfo, w: number): string {
   const parts = [`${f.contextLeftPct}% context left`, spend];
   if (f.switches) parts.push(`${f.switches} switch${f.switches === 1 ? '' : 'es'}`);
   const left = ` ${t.success(glyph.active)} ${f.model} ${t.muted(`· ${f.label} · ${parts.join(' · ')}`)}`;
-  const modeColor = f.mode === 'yolo' ? t.danger : f.mode === 'auto-edit' ? t.warning : t.muted;
+  const modeColor = f.mode === 'yolo' ? t.danger : f.mode === 'auto-edit' ? t.warning : f.mode === 'plan' ? t.accent : t.muted;
   const mode = modeColor(`⏵ ${MODE_LABELS[f.mode]}`) + t.muted(' (shift+tab)');
   const procs = f.running ? `  ${t.accent(`${glyph.gear} ${f.running} running`)}${t.muted(' (^P)')}` : '';
   const right = `${mode}${procs} `;
   if (width(left) + width(right) + 2 > w) {
-    return justify(left, `${modeColor(`⏵ ${f.mode === 'ask' ? 'ask' : f.mode === 'auto-edit' ? 'auto-edit' : 'full access'}`)}${procs} `, w);
+    const short = { ask: 'ask', 'auto-edit': 'auto-edit', plan: 'plan mode', yolo: 'full access' }[f.mode];
+    return justify(left, `${modeColor(`⏵ ${short}`)}${procs} `, w);
   }
   return justify(left, right, w);
 }
@@ -389,4 +390,13 @@ export function renderMcpPanel(v: McpPanelView, w: number, maxBody: number): str
     body.push(footer);
   }
   return box(t.bold('MCP servers'), t.muted('tools work with every model in your chain'), [...head, ...body], w, t.accent);
+}
+
+// ---- Plan approval -------------------------------------------------------------------
+
+export const PLAN_OPTIONS = ['Yes, and auto-approve file edits', 'Yes, but ask before each change', 'No, keep planning'];
+
+export function renderPlanPrompt(choice: number, w: number): string[] {
+  const body = ['', ...PLAN_OPTIONS.map((o, i) => (i === choice ? `${t.accent('❯')} ${t.bold(`${i + 1}. ${o}`)}` : `  ${t.muted(`${i + 1}. ${o}`)}`)), '', t.muted(`↑↓ + enter, or press 1 · 2 · 3   ${glyph.sep}   esc = keep planning`)];
+  return box(t.accent(t.bold('Ready to implement this plan?')), t.muted('plan mode'), body, w, t.accent);
 }

@@ -31,7 +31,7 @@ export function terminalEvents(): AgentEvents & { reset(): void } {
   };
 }
 
-export function makeApprover(mode: 'ask' | 'auto-edit' | 'yolo', getRl: () => Interface | undefined) {
+export function makeApprover(mode: 'ask' | 'auto-edit' | 'plan' | 'yolo', getRl: () => Interface | undefined) {
   return async (summary: string): Promise<boolean> => {
     if (mode === 'yolo') return true;
     if (mode === 'auto-edit' && !summary.startsWith('$ ')) return true;

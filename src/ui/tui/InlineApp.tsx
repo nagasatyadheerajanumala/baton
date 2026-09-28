@@ -9,7 +9,8 @@ import { accountLabel, pricingOverrides, runCommand, targetState } from '../comm
 import { glyph, t } from '../theme.js';
 import { type EditorState, editKey, emptyEditor } from './editor.js';
 import { renderEntry, welcomeLines, wrap } from './format.js';
-import { type McpRow, type McpSection, type PickerAccount, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
+import { INIT_PROMPT, loadInstructions } from '../../agent/instructions.js';
+import { type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderPlanPrompt, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
 import { POPULAR, type CatalogEntry, searchRegistry } from '../../mcp/catalog.js';
 import { importCandidates, saveServer } from '../../mcp/cli.js';
 import { loginToServer, mcpAuthDir } from '../../mcp/client.js';
@@ -57,6 +58,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
   const controller = useRef<AbortController | null>(null);
   const router = agent.router;
   const running = agent.processes.runningCount;
+  const [instructionLabels] = useState(() => loadInstructions(agent.session.cwd).map((f) => f.label.replace(/ \(.*\)$/, '')));
   const w = Math.max(40, cols);
 
   useEffect(() => {
@@ -264,6 +266,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       setExitArmed(false);
       if (text === '/model') return openPicker();
       if (text === '/mcp') return openMcp();
+      if (text === '/init') return runTurn(INIT_PROMPT, '/init: write AGENTS.md for this project');
       if (text === '/clear') {
         process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
         return store.clear();
@@ -283,12 +286,26 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         void proc.done.then(() => store.push({ kind: 'output', text: t.muted(proc.tail(40) || '(no output)') }));
         return;
       }
+      runTurn(text);
+    },
+    [agent, openPicker, openMcp, requestExit, store, configFile],
+  );
+
+  /** Run one request. `shown` is what the transcript displays if it differs from what the model gets. */
+  function runTurn(prompt: string, shown?: string) {
       const ac = new AbortController();
       controller.current = ac;
-      store.beginTurn(text);
+      store.beginTurn(shown ?? prompt);
       agent
-        .run(text, store.events(), ac.signal)
-        .then(() => store.endTurn())
+        .run(prompt, store.events(), ac.signal)
+        .then(() => {
+          store.endTurn();
+          // A finished plan-mode turn ends with the question: implement it?
+          if (store.approvalMode === 'plan' && !ac.signal.aborted && store.queue.length === 0) {
+            store.planPrompt = { choice: 0 };
+            store.changed();
+          }
+        })
         .catch((err: Error) => {
           if (ac.signal.aborted || err.name === 'AbortError' || err.name === 'APIUserAbortError') store.endTurn({ message: 'Interrupted. Type what to do next.', level: 'warn' });
           else if (err instanceof AllTargetsExhaustedError) store.endTurn({ message: err.message });
@@ -297,13 +314,11 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         .finally(() => {
           if (controller.current === ac) controller.current = null;
         });
-    },
-    [agent, openPicker, openMcp, requestExit, store, configFile],
-  );
+  }
 
   // Send queued follow-ups once the current turn is done.
   useEffect(() => {
-    if (!store.running && !store.approval && store.queue.length) {
+    if (!store.running && !store.approval && !store.planPrompt && store.queue.length) {
       const next = store.dequeue();
       if (next) submit(next);
     }
@@ -340,6 +355,30 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
         choose(2);
         controller.current?.abort();
         return;
+      }
+      return store.changed();
+    }
+
+    // Plan approval
+    if (store.planPrompt) {
+      const pp = store.planPrompt;
+      const n = PLAN_OPTIONS.length;
+      const choose = (i: number) => {
+        store.planPrompt = null;
+        if (i === 2) return store.changed(); // keep planning: type feedback next
+        store.approvalMode = i === 0 ? 'auto-edit' : 'ask';
+        runTurn('The plan is approved. Implement it now, then verify it works.', 'Go ahead with the plan');
+      };
+      if (key.upArrow) pp.choice = (pp.choice + n - 1) % n;
+      else if (key.downArrow) pp.choice = (pp.choice + 1) % n;
+      else if (key.return) return choose(pp.choice);
+      else if (input === '1' || input === '2' || input === '3') return choose(Number(input) - 1);
+      else if (key.escape) return choose(2);
+      else if (input && !key.ctrl && !key.meta) {
+        // Typing means "keep planning, here's feedback": drop the prompt and let the text through.
+        store.planPrompt = null;
+        const r = editKey(editor, input, key);
+        setEditor(r.state);
       }
       return store.changed();
     }
@@ -485,7 +524,9 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
   );
 
   let panel: string[];
-  if (store.approval) {
+  if (store.planPrompt) {
+    panel = renderPlanPrompt(store.planPrompt.choice, w - 1);
+  } else if (store.approval) {
     panel = renderApproval({ ...store.approval, choice: store.approvalChoice, cwd: agent.session.cwd, cwdLabel: tildify(agent.session.cwd), mode: store.approvalMode }, w - 1);
   } else if (store.picker.open) {
     panel = renderModelPicker(accounts(), store.picker.index, w - 1, now);
@@ -501,13 +542,13 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
 
   const slashHint =
     !store.approval && !store.picker.open && !store.mcpPanel.open && !procs.open && editor.value.startsWith('/') && !editor.value.includes(' ')
-      ? t.muted(`  ${['/model', '/mcp', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
+      ? t.muted(`  ${['/model', '/mcp', '/init', '/memory', '/rewind', '/undo', '/status', '/compact', '/clear', '/help', '/exit'].filter((c) => c.startsWith(editor.value)).join('   ') || 'no matching command'}`)
       : undefined;
 
   return (
     <>
       <Static key={store.epoch} items={items}>
-        {(item) => <Text key={item.key}>{'welcome' in item ? welcomeLines(w - 1, version).join('\n') : renderEntry(item.entry, { ...ctx, waitingCallId: undefined }).join('\n')}</Text>}
+        {(item) => <Text key={item.key}>{'welcome' in item ? welcomeLines(w - 1, version, instructionLabels).join('\n') : renderEntry(item.entry, { ...ctx, waitingCallId: undefined }).join('\n')}</Text>}
       </Static>
       <Box flexDirection="column" width={w}>
         {shownLive.length > 0 && <Text>{shownLive.join('\n')}</Text>}

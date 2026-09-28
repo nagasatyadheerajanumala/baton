@@ -267,7 +267,9 @@ describe('inline UI pieces', () => {
     store.enqueue('two');
     expect(store.dequeue()).toBe('one');
     expect(store.queue).toEqual(['two']);
-    expect([store.cycleMode(), store.cycleMode(), store.cycleMode()]).toEqual(['auto-edit', 'yolo', 'ask']);
+    expect([store.cycleMode(), store.cycleMode(), store.cycleMode()]).toEqual(['auto-edit', 'plan', 'ask']);
+    store.approvalMode = 'yolo';
+    expect(store.cycleMode()).toBe('ask'); // full access is never re-entered by cycling
 
     const ev = store.events();
     store.beginTurn('go');
@@ -297,5 +299,39 @@ describe('inline UI pieces', () => {
     expect(humanReason('quota', true)).toBe('hit its usage limit');
     expect(humanReason('quota', false)).toBe('ran out of credits or quota');
     expect(humanReason('auth', true)).toBe("isn't signed in");
+  });
+});
+
+describe('plan mode and instructions', () => {
+  it('plan mode refuses anything that changes things, but allows reading and read-only commands', async () => {
+    const { ToolEngine, PLAN_MODE_REFUSAL } = await import('../src/tools/registry.js');
+    const cwd = mkdtempSync(join(tmpdir(), 'baton-plan-'));
+    writeFileSync(join(cwd, 'a.txt'), 'hi\n');
+    const engine = new ToolEngine();
+    const ctx = { cwd, approve: async () => true, processes: new ProcessManager(), planMode: () => true };
+    const call = (name: string, input: Record<string, unknown>) => engine.run({ type: 'tool_call', id: 'c', name, input }, ctx);
+    expect((await call('write_file', { path: 'b.txt', content: 'x' })).content).toBe(PLAN_MODE_REFUSAL);
+    expect((await call('bash', { command: 'touch x' })).content).toBe(PLAN_MODE_REFUSAL);
+    expect((await call('read_file', { path: 'a.txt' })).content).toContain('hi');
+    expect((await call('bash', { command: 'ls' })).isError).toBeFalsy();
+  });
+
+  it('loads AGENTS.md and CLAUDE.md up the tree, resolves @imports, and never includes a file twice', async () => {
+    const { loadInstructions, instructionsPrompt } = await import('../src/agent/instructions.js');
+    const root = mkdtempSync(join(tmpdir(), 'baton-mem-'));
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(root, '.git'));
+    mkdirSync(join(root, 'pkg', 'web'), { recursive: true });
+    writeFileSync(join(root, 'AGENTS.md'), 'Use pnpm.');
+    writeFileSync(join(root, 'CLAUDE.md'), '@AGENTS.md\n');
+    writeFileSync(join(root, 'docs.md'), 'Style: no semicolons.');
+    writeFileSync(join(root, 'pkg', 'web', 'CLAUDE.md'), 'Web rules. See @../../docs.md');
+    const files = loadInstructions(join(root, 'pkg', 'web'), { BATON_HOME: join(root, 'none'), CODEX_HOME: join(root, 'none') });
+    const labels = files.map((f) => f.label).filter((l) => !l.startsWith('~'));
+    expect(labels).toEqual(['../../AGENTS.md', 'CLAUDE.md']); // root CLAUDE.md only re-imported AGENTS.md, so it adds nothing
+    const prompt = instructionsPrompt(files);
+    expect(prompt).toContain('Use pnpm.');
+    expect(prompt).toContain('Style: no semicolons.');
+    expect(prompt.match(/Use pnpm\./g)).toHaveLength(1);
   });
 });

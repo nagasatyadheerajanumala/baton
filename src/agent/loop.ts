@@ -8,6 +8,7 @@ import { type Router, type Target, targetLabel } from '../router/router.js';
 import { gitSnapshot } from '../tools/shell.js';
 import { ProcessManager, formatDuration } from '../tools/processes.js';
 import type { ToolEngine } from '../tools/registry.js';
+import { instructionsPrompt, loadInstructions } from './instructions.js';
 import { buildSystemPrompt } from './prompt.js';
 
 export interface AgentEvents {
@@ -27,6 +28,8 @@ export interface AgentOptions {
   processes?: ProcessManager;
   /** MCP servers; their tools are added to the tool engine as they connect. */
   mcp?: McpManager;
+  /** True while the user has plan mode on. */
+  planMode?: () => boolean;
   /** Hard stop on runaway tool loops. */
   maxSteps?: number;
 }
@@ -73,7 +76,7 @@ export class Agent {
     this.bridge?.attach({
       session: this.session,
       events,
-      ctx: { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes },
+      ctx: { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode },
       producer: () => ({ provider: this.router.current.provider, model: this.router.current.model }),
     });
     try {
@@ -122,7 +125,7 @@ export class Agent {
           continue;
         }
         events.onToolStart?.(call, this.tools.describe(call));
-        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes });
+        const result = await this.tools.run(call, { cwd: this.opts.cwd, signal, approve: this.opts.approve, processes: this.processes, planMode: this.opts.planMode });
         events.onToolEnd?.(call, result);
         results.push(result);
       }
@@ -134,7 +137,10 @@ export class Agent {
 
   /** Build a request sized for `target`, compacting the history view if needed. */
   private async prepare(target: Target, budgetScale: number, events: AgentEvents) {
-    const system = buildSystemPrompt(this.opts.cwd) + (await this.handoffNote(target));
+    const plan = this.opts.planMode?.()
+      ? '\n\n# Plan mode is ON\nDo not change anything: no file edits, no commands with side effects. Research with read-only tools, then reply with a concise, numbered implementation plan (files to touch, what changes, how you will verify) and stop. The user will approve before you implement.'
+      : '';
+    const system = buildSystemPrompt(this.opts.cwd) + instructionsPrompt(loadInstructions(this.opts.cwd)) + plan + (await this.handoffNote(target));
     const toolTokens = estimateTextTokens(JSON.stringify(this.tools.specs));
     const budget = Math.floor(
       ((target.contextWindow - target.maxOutputTokens) * SAFETY - estimateTextTokens(system) - toolTokens) * budgetScale,

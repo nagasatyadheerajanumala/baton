@@ -51,10 +51,11 @@ const TOOL_NAMES: Record<string, string> = {
   output: 'Output', stop: 'Stop', procs: 'Processes', git: 'Git',
 };
 
-export function welcomeLines(w: number, version: string): string[] {
+export function welcomeLines(w: number, version: string, instructions: string[] = []): string[] {
   return [
     '',
     `  ${t.bold('baton')} ${t.muted(`v${version}`)}`,
+    ...(instructions.length ? gutter('  ', '  ', t.muted(`Following ${instructions.join(', ')}`), w) : []),
     ...gutter('  ', '  ', t.muted('Ask for a change, a fix, or an explanation. If a model hits its limit, baton hands the session to the next one and keeps going.'), w),
     '',
     t.muted(`  / commands  ${glyph.sep}  shift+tab permission mode  ${glyph.sep}  ^O full output  ${glyph.sep}  ^P processes  ${glyph.sep}  esc interrupt`),

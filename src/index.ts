@@ -29,7 +29,7 @@ Usage:
 
 Options:
   -m, --model <name>         start on this chain entry (label, model id, or index)
-  -a, --approval <mode>      ask | auto-edit | yolo   (default: ask)
+  -a, --approval <mode>      ask | auto-edit | plan | yolo   (default: ask)
   -y, --yes                  shorthand for --approval yolo
       --plain                simple line-based prompt
       --fullscreen           full-screen layout with a side process pane and mouse support
@@ -110,7 +110,7 @@ async function main(): Promise<number> {
   const session = resumeId ? Session.load(resumeId) : new Session(undefined, cwd);
 
   const approval = (values.yes ? 'yolo' : values.approval ?? config.approval ?? 'ask') as ApprovalMode;
-  if (!['ask', 'auto-edit', 'yolo'].includes(approval)) throw new Error(`Unknown approval mode "${approval}"`);
+  if (!['ask', 'auto-edit', 'plan', 'yolo'].includes(approval)) throw new Error(`Unknown approval mode "${approval}"`);
 
   const prompt = values.print ?? (positionals.length ? positionals.join(' ') : undefined);
   const oneShot = values.print !== undefined || !process.stdin.isTTY;
@@ -133,7 +133,7 @@ async function main(): Promise<number> {
       return 1;
     }
     await mcp?.connectAll();
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => undefined) });
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => undefined), planMode: () => approval === 'plan' });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
     await agent.run(prompt, terminalEvents(), controller.signal).finally(() => agent.close());
@@ -149,7 +149,7 @@ async function main(): Promise<number> {
     const { TuiStore } = await import('./ui/tui/store.js');
     const { runTui } = await import('./ui/tui/run.js');
     const store = new TuiStore(session.cwd, approval);
-    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve });
+    const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve, planMode: () => store.approvalMode === 'plan' });
     // Servers connect in the background; tools appear as each one is ready.
     if (hasMcp) void mcp?.connectAll().then(() => store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status !== 'connected' && s.status !== 'disabled') ? 'warn' : 'info', text: mcpSummary() }));
     await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline', configFile: existsSync(source) ? source : undefined });
@@ -161,7 +161,7 @@ async function main(): Promise<number> {
   const rl = createRl();
   await mcp?.connectAll();
   if (mcp) console.log(mcpSummary());
-  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => rl) });
+  const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => rl), planMode: () => approval === 'plan' });
   await runRepl(agent, rl, source);
   rl.close();
   await agent.close();

@@ -2,6 +2,7 @@ import type { Agent } from '../agent/loop.js';
 import { compact, estimateTokens } from '../compaction/compact.js';
 import { touchedFiles } from '../ir/session.js';
 import { sessionCost } from '../pricing.js';
+import { loadInstructions } from '../agent/instructions.js';
 import { saveModelChoice } from '../config/config.js';
 import { MissingKeyAdapter } from '../providers/registry.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
@@ -18,6 +19,9 @@ export const c = {
 export const HELP = `Commands:
   /model [name|index]  show the failover chain, or switch to a model manually
   /mcp                 MCP servers and their tools
+  /init                write or improve AGENTS.md for this project
+  /memory              instruction files every model is following
+  /rewind, /undo       restore files from before an earlier request
   /status              session, token and cost info
   /compact [tokens]    preview what compaction would do for the current model
   /clear               clear the screen (history is kept)
@@ -106,6 +110,17 @@ export function runCommand(input: string, agent: Agent, opts: { configFile?: str
       });
       lines.push('', c.dim('Switch with /model <name>, e.g. /model claude-sonnet-5-5'));
       return { output: lines.join('\n') };
+    }
+    case 'memory': {
+      const files = loadInstructions(agent.session.cwd);
+      if (!files.length) return { output: `No instruction files found. ${c.bold('/init')} writes an AGENTS.md for this project.` };
+      return {
+        output: [
+          'Every model in the chain follows these (later ones take precedence):',
+          ...files.map((f) => `  ${c.green('●')} ${f.label}  ${c.dim(`${f.content.length.toLocaleString()} chars`)}`),
+          c.dim('Edit the files directly; changes apply from the next request.'),
+        ].join('\n'),
+      };
     }
     case 'mcp': {
       const servers = agent.mcp?.servers ?? [];
