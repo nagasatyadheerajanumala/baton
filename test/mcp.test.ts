@@ -255,3 +255,27 @@ describe('MCP catalog and registry', () => {
     expect(text).toContain('Type to search the MCP registry');
   });
 });
+
+describe('automatic discovery of servers set up in Codex and Claude Code', () => {
+  it('picks up Codex servers, skips built-ins, excluded and already-configured names', async () => {
+    const { discoverServers } = await import('../src/mcp/cli.js');
+    delete process.env.BATON_NO_DISCOVERY;
+    process.env.PATH = `${resolve('test/fixtures/bin')}:${process.env.PATH}`; // fake `codex mcp list --json`
+    const found = await discoverServers(dir(), {
+      providers: {},
+      chain: [],
+      mcpServers: { linear: { type: 'http', url: 'https://example.com/my-own-linear' } },
+      mcpExclude: [],
+      mcpImport: { codex: true, claude: false },
+    });
+    expect(found.map((c) => c.name)).toEqual(['playwright']); // linear is configured in baton already; node_repl is a Codex built-in
+    const hidden = await discoverServers(dir(), { providers: {}, chain: [], mcpExclude: ['playwright'], mcpImport: { codex: true, claude: false } });
+    expect(hidden.map((c) => c.name)).toEqual(['linear']);
+  });
+
+  it('stays off in tests and scripted runs', async () => {
+    const { discoverServers } = await import('../src/mcp/cli.js');
+    process.env.BATON_NO_DISCOVERY = '1';
+    expect(await discoverServers(dir(), { providers: {}, chain: [] })).toEqual([]);
+  });
+});

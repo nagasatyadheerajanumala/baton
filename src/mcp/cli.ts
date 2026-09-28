@@ -42,6 +42,52 @@ export function saveServer(cwd: string, name: string, server: McpServerConfig | 
   return path;
 }
 
+/** Async `codex mcp list --json`, so discovery never blocks startup. */
+async function codexCandidatesAsync(): Promise<ImportCandidate[]> {
+  const { execFile } = await import('node:child_process');
+  const stdout = await new Promise<string>((res) => execFile('codex', ['mcp', 'list', '--json'], { timeout: 15_000 }, (err, out) => res(err ? '' : out)));
+  if (!stdout) return [];
+  try {
+    const items = JSON.parse(stdout) as CodexListItem[];
+    return items.map((i) => {
+      const t = i.transport ?? {};
+      const config: McpServerConfig =
+        t.type === 'stdio'
+          ? { command: t.command, args: t.args ?? [], ...(t.env && Object.keys(t.env).length ? { env: t.env } : {}), ...(t.env_vars?.length ? { envVars: t.env_vars } : {}), ...(t.cwd ? { cwd: t.cwd } : {}) }
+          : { type: 'http', url: t.url, ...(t.http_headers ? { headers: t.http_headers } : {}), ...(t.bearer_token_env_var ? { bearerTokenEnv: t.bearer_token_env_var } : {}) };
+      if (i.enabled === false) config.enabled = false;
+      return { name: i.name, source: 'codex' as const, config, builtIn: CODEX_BUILTINS.has(i.name) || (t.command ?? '').includes('/.codex/') };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Servers the user already set up in Codex and Claude Code (user-level, not
+ * project .mcp.json, which needs an explicit import). Codex built-ins that
+ * only run inside Codex are skipped, as are names baton already configures
+ * or the user excluded.
+ */
+export async function discoverServers(cwd: string, config: Config): Promise<ImportCandidate[]> {
+  if (process.env.BATON_NO_DISCOVERY) return []; // tests and scripted runs stay hermetic
+  const want = { codex: config.mcpImport?.codex !== false, claude: config.mcpImport?.claude !== false };
+  const skip = new Set([...Object.keys(config.mcpServers ?? {}), ...(config.mcpExclude ?? [])]);
+  const found = [...(want.codex ? await codexCandidatesAsync() : []), ...(want.claude ? claudeCandidates(cwd).filter((c) => c.source === 'claude') : [])];
+  const seen = new Set<string>();
+  return found.filter((c) => !c.builtIn && !skip.has(c.name) && c.config.enabled !== false && (seen.has(c.name) ? false : (seen.add(c.name), true)));
+}
+
+/** Hide a discovered server from baton (it stays in Codex / Claude Code), or show it again. */
+export function setExcluded(cwd: string, name: string, excluded: boolean): void {
+  const { path, config } = editableConfig(cwd);
+  const set = new Set(config.mcpExclude ?? []);
+  if (excluded) set.add(name);
+  else set.delete(name);
+  config.mcpExclude = [...set];
+  save(path, config);
+}
+
 /** Everything importable from Codex, Claude Code and the project, one entry per name. */
 export function importCandidates(cwd: string): ImportCandidate[] {
   const seen = new Set<string>();

@@ -71,6 +71,7 @@ src/
 12. **External agents execute tools only through the bridge.** Claude Code runs with `--tools ""`; Codex runs read-only with baton's MCP server pre-approved. That keeps approvals, the process pane and the IR log authoritative.
 13. **Permission prompts answer only to numbers, arrows+enter and esc.** Never letters: text typed mid-sentence as a prompt appears must not approve anything. Read-only detection (readonly.ts) must stay conservative; when unsure, ask.
 
+15. **Discovery is read-only and hermetic in tests.** baton auto-uses MCP servers from `codex mcp list --json` and ~/.claude.json at startup (never writes to Codex/Claude config; hiding one only adds it to baton's `mcpExclude`). Tests set BATON_NO_DISCOVERY via vitest.config.ts so they never touch the developer's real setup.
 14. **MCP sign-in only happens in `baton mcp login`.** Background connects use saved tokens or report `needs-login`; they must never register OAuth clients or open browsers. Tokens are stored mode 600 and never borrowed from other apps. Project `.mcp.json` is never auto-loaded (a repo could run any command); users import it explicitly.
 
 ## Design decisions

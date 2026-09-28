@@ -368,7 +368,7 @@ export function renderMcpPanel(v: McpPanelView, w: number, maxBody: number): str
         const pointer = sel ? t.accent('❯') : ' ';
         if (r.kind === 'server') {
           const dot = r.status === 'connected' ? t.success(glyph.active) : r.status === 'failed' ? t.danger(glyph.active) : r.status === 'disabled' ? t.muted(glyph.idle) : t.warning(glyph.active);
-          body.push(truncate(`${pointer} ${dot} ${sel ? t.bold(r.name.padEnd(idw)) : r.name.padEnd(idw)}${serverStatus(r)}`, inner));
+          body.push(truncate(`${pointer} ${dot} ${sel ? t.bold(r.name.padEnd(idw)) : r.name.padEnd(idw)}${serverStatus(r)}${r.where ? t.muted(`  · ${r.where}`) : ''}`, inner));
         } else {
           const e = r.entry;
           const kind = e.config.url ? 'remote' : 'local';

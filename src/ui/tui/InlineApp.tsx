@@ -12,7 +12,7 @@ import { renderEntry, welcomeLines, wrap } from './format.js';
 import { INIT_PROMPT, loadInstructions } from '../../agent/instructions.js';
 import { type McpRow, type McpSection, type PickerAccount, PLAN_OPTIONS, renderPlanPrompt, approvalOptions, mcpRows, pickerItems, renderApproval, renderFooter, renderInputBox, renderMcpPanel, renderModelPicker, renderProcBox, renderQueue, renderWorking, serverMenuOptions } from './panels.js';
 import { POPULAR, type CatalogEntry, searchRegistry } from '../../mcp/catalog.js';
-import { importCandidates, saveServer } from '../../mcp/cli.js';
+import { importCandidates, saveServer, setExcluded } from '../../mcp/cli.js';
 import { loginToServer, mcpAuthDir } from '../../mcp/client.js';
 import { saveModelChoice } from '../../config/config.js';
 import type { Entry, TuiStore } from './store.js';
@@ -120,7 +120,7 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
     const q = p.query.trim().toLowerCase();
     const yours: McpRow[] = servers
       .filter((s) => !q || s.name.toLowerCase().includes(q))
-      .map((s) => ({ kind: 'server', name: s.name, status: s.status, error: s.error, tools: s.tools.length, where: s.config.url ?? s.config.command ?? '' }));
+      .map((s) => ({ kind: 'server', name: s.name, status: s.status, error: s.error, tools: s.tools.length, where: s.origin === 'codex' ? 'from Codex' : s.origin === 'claude' ? 'from Claude Code' : '' }));
     if (q) {
       const local = [...p.imports, ...POPULAR].filter((e) => fresh(e) && (e.name.includes(q) || e.description.toLowerCase().includes(q)));
       const seen = new Set(local.map((e) => e.name));
@@ -241,7 +241,11 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       }
       p.menu = undefined;
       if (option === 'Sign in') return void signIn(name);
-      if (option === 'Remove') {
+      if (option === 'Hide from baton') {
+        await mcp.remove(name);
+        setExcluded(agent.session.cwd, name, true);
+        store.push({ kind: 'notice', level: 'info', text: `Hid ${name} from baton. It's still set up in ${state.origin === 'codex' ? 'Codex' : 'Claude Code'}.` });
+      } else if (option === 'Remove') {
         await mcp.remove(name);
         saveServer(agent.session.cwd, name, undefined);
         store.push({ kind: 'notice', level: 'info', text: `Removed ${name}.` });
@@ -402,7 +406,11 @@ export function InlineApp({ agent, store, version, configFile, onExit }: InlineA
       else if (key.downArrow) p.cursor = Math.min(Math.max(0, rows.length - 1), p.cursor + 1);
       else if (key.return) {
         const row = rows[p.cursor];
-        if (row?.kind === 'server') p.menu = { server: row.name, options: serverMenuOptions(row.status), index: 0 };
+        if (row?.kind === 'server') {
+          const discovered = mcp?.servers.find((s) => s.name === row.name)?.origin !== 'baton';
+          const options = serverMenuOptions(row.status).map((o) => (o === 'Remove' && discovered ? 'Hide from baton' : o)).filter((o) => !(discovered && (o === 'Disable' || o === 'Enable')));
+          p.menu = { server: row.name, options, index: 0 };
+        }
         else if (row?.kind === 'candidate') return void addServer(row.entry);
       } else if (key.escape) {
         if (p.query) {

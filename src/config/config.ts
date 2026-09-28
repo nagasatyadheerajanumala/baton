@@ -46,6 +46,10 @@ export interface Config {
   providers: Record<string, ProviderConfig>;
   /** MCP servers whose tools every model can use (same shape as Claude Code's .mcp.json). */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Use the MCP servers already set up in Codex / Claude Code automatically (default: both on). */
+  mcpImport?: { codex?: boolean; claude?: boolean };
+  /** Discovered servers to leave out of baton (they stay configured in Codex / Claude Code). */
+  mcpExclude?: string[];
   /** Failover order. The first entry is the starting model. */
   chain: TargetConfig[];
   approval?: ApprovalMode;

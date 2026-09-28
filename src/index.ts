@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { Agent } from './agent/loop.js';
 import { type ApprovalMode, configPaths, loadConfig, starterConfig, toTargets } from './config/config.js';
 import { runDoctor } from './doctor.js';
-import { runMcpCommand } from './mcp/cli.js';
+import { discoverServers, runMcpCommand } from './mcp/cli.js';
 import { McpManager } from './mcp/client.js';
 import { Session } from './ir/session.js';
 import { MissingKeyAdapter, buildAdapters } from './providers/registry.js';
@@ -116,15 +116,26 @@ async function main(): Promise<number> {
   const oneShot = values.print !== undefined || !process.stdin.isTTY;
   const processes = new ProcessManager();
   process.once('exit', () => processes.killAll());
-  const hasMcp = Boolean(config.mcpServers && Object.keys(config.mcpServers).length);
-  // Interactive sessions always get a manager so /mcp can add servers on the fly.
-  const mcp = hasMcp || (!oneShot && !values.plain) ? new McpManager(config.mcpServers ?? {}, session.cwd) : undefined;
+  // Every session gets MCP: baton's own servers plus the ones already set up in
+  // Codex and Claude Code, discovered automatically so nothing is added twice.
+  const mcp = new McpManager(config.mcpServers ?? {}, session.cwd);
+  const loadMcp = async () => {
+    for (const c of await discoverServers(session.cwd, config)) mcp.add(c.name, c.config, c.source === 'codex' ? 'codex' : 'claude');
+    await mcp.connectAll();
+  };
   const mcpSummary = () => {
-    const s = mcp?.servers ?? [];
+    const s = mcp.servers;
     const ok = s.filter((x) => x.status === 'connected');
     const bad = s.filter((x) => x.status === 'failed' || x.status === 'needs-login');
     const tools = ok.reduce((n, x) => n + x.tools.length, 0);
-    return `MCP: ${ok.length} server${ok.length === 1 ? '' : 's'} connected (${tools} tools)${bad.length ? `; ${bad.map((b) => `${b.name} ${b.status === 'needs-login' ? 'needs sign-in' : 'failed'}`).join(', ')} (see /mcp)` : ''}`;
+    const fromOthers = s.filter((x) => x.origin !== 'baton').length;
+    const login = bad.filter((b) => b.status === 'needs-login').map((b) => b.name);
+    const failed = bad.filter((b) => b.status === 'failed').map((b) => b.name);
+    return [
+      `MCP: ${ok.length} of ${s.length} server${s.length === 1 ? '' : 's'} connected (${tools} tools)${fromOthers ? `, including ${fromOthers} found in Codex / Claude Code` : ''}.`,
+      login.length ? ` Sign in once with /mcp: ${login.join(', ')}.` : '',
+      failed.length ? ` Not starting: ${failed.join(', ')} (details in /mcp).` : '',
+    ].join('');
   };
 
   if (oneShot) {
@@ -132,7 +143,7 @@ async function main(): Promise<number> {
       console.error('Nothing to do: pass a prompt with -p.');
       return 1;
     }
-    await mcp?.connectAll();
+    await loadMcp();
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => undefined), planMode: () => approval === 'plan' });
     const controller = new AbortController();
     process.on('SIGINT', () => controller.abort());
@@ -151,7 +162,10 @@ async function main(): Promise<number> {
     const store = new TuiStore(session.cwd, approval);
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: store.approve, planMode: () => store.approvalMode === 'plan' });
     // Servers connect in the background; tools appear as each one is ready.
-    if (hasMcp) void mcp?.connectAll().then(() => store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status !== 'connected' && s.status !== 'disabled') ? 'warn' : 'info', text: mcpSummary() }));
+    // Servers connect in the background; tools appear as each one is ready.
+    void loadMcp().then(() => {
+      if (mcp.servers.length) store.push({ kind: 'notice', level: mcp.servers.some((s) => s.status === 'needs-login' || s.status === 'failed') ? 'warn' : 'info', text: mcpSummary() });
+    });
     await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline', configFile: existsSync(source) ? source : undefined });
     await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);
@@ -159,8 +173,8 @@ async function main(): Promise<number> {
   }
 
   const rl = createRl();
-  await mcp?.connectAll();
-  if (mcp) console.log(mcpSummary());
+  await loadMcp();
+  if (mcp.servers.length) console.log(mcpSummary());
   const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, mcp, approve: makeApprover(approval, () => rl), planMode: () => approval === 'plan' });
   await runRepl(agent, rl, source);
   rl.close();

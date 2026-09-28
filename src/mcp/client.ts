@@ -44,9 +44,13 @@ export interface McpToolInfo {
   readOnly: boolean;
 }
 
+export type McpOrigin = 'baton' | 'codex' | 'claude';
+
 export interface McpServerState {
   name: string;
   config: McpServerConfig;
+  /** Where the server is configured: baton's own config, or discovered from Codex / Claude Code. */
+  origin: McpOrigin;
   status: McpStatus;
   error?: string;
   tools: McpToolInfo[];
@@ -202,7 +206,7 @@ export class McpManager extends EventEmitter {
   ) {
     super();
     for (const [name, config] of Object.entries(servers)) {
-      this.states.set(name, { name, config, status: config.enabled === false ? 'disabled' : 'connecting', tools: [] });
+      this.states.set(name, { name, config, origin: 'baton', status: config.enabled === false ? 'disabled' : 'connecting', tools: [] });
     }
   }
 
@@ -216,8 +220,8 @@ export class McpManager extends EventEmitter {
   }
 
   /** Add a server at runtime (e.g. from the /mcp panel); call connect() next. */
-  add(name: string, config: McpServerConfig): McpServerState {
-    const state: McpServerState = { name, config, status: config.enabled === false ? 'disabled' : 'connecting', tools: [] };
+  add(name: string, config: McpServerConfig, origin: McpOrigin = 'baton'): McpServerState {
+    const state: McpServerState = { name, config, origin, status: config.enabled === false ? 'disabled' : 'connecting', tools: [] };
     this.states.set(name, state);
     this.emit('change');
     return state;

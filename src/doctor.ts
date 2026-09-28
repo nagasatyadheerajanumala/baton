@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { type Config, type ProviderConfig, detectSubscriptions, isSubscriptionType, resolveApiKey, toTargets } from './config/config.js';
 import { Session, newMessage } from './ir/session.js';
 import { ToolBridge } from './mcp/bridge.js';
+import { discoverServers } from './mcp/cli.js';
 import { McpManager } from './mcp/client.js';
 import { ProcessManager } from './tools/processes.js';
 import { ToolEngine } from './tools/registry.js';
@@ -96,9 +97,10 @@ export async function runDoctor(config: Config, source: string, out: Out = (s) =
 
   const usable = results.filter((r) => r.ok).length;
 
-  if (config.mcpServers && Object.keys(config.mcpServers).length) {
+  const manager = new McpManager(config.mcpServers ?? {}, process.cwd());
+  for (const c of await discoverServers(process.cwd(), config)) manager.add(c.name, c.config, c.source === 'codex' ? 'codex' : 'claude');
+  if (manager.servers.length) {
     out('\nMCP servers');
-    const manager = new McpManager(config.mcpServers, process.cwd());
     await manager.connectAll(15_000);
     for (const srv of manager.servers) {
       const mark = srv.status === 'connected' ? green('✓') : srv.status === 'disabled' ? dim('○') : srv.status === 'needs-login' ? yellow('!') : red('✗');
@@ -107,7 +109,7 @@ export async function runDoctor(config: Config, source: string, out: Out = (s) =
         : srv.status === 'needs-login' ? yellow(`needs sign-in: baton mcp login ${srv.name}`)
         : srv.status === 'disabled' ? dim('disabled')
         : red(srv.error ?? 'failed');
-      out(`${mark} ${srv.name}  ${detail}`);
+      out(`${mark} ${srv.name}  ${detail}${srv.origin !== 'baton' ? dim(`  · from ${srv.origin === 'codex' ? 'Codex' : 'Claude Code'}`) : ''}`);
     }
     await manager.close();
   }
