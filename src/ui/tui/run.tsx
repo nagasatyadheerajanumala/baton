@@ -16,6 +16,8 @@ export interface TuiOptions {
   approval: ApprovalMode;
   /** inline (default): scrollback transcript like Claude Code. fullscreen: panes + mouse. */
   layout?: 'inline' | 'fullscreen';
+  /** Config file model choices are saved to. */
+  configFile?: string;
 }
 
 async function cwdLabel(cwd: string): Promise<string> {
@@ -93,7 +95,7 @@ async function runInline(agent: Agent, opts: TuiOptions): Promise<void> {
       process.exit(128 + (sig === 'SIGTERM' ? 15 : 1));
     });
   }
-  const instance = render(<InlineApp agent={agent} store={store} version={opts.version} onExit={cleanup} />, {
+  const instance = render(<InlineApp agent={agent} store={store} version={opts.version} configFile={opts.configFile} onExit={cleanup} />, {
     exitOnCtrlC: false,
     maxFps: 30,
     patchConsole: true,

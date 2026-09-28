@@ -55,7 +55,7 @@ With `--fullscreen`, the process pane sits on the right and is clickable (`^P` o
 
 | Command | |
 |---|---|
-| `/model` | pick a model: shows each one's account and status, including when a limited plan comes back; `/model <name>` switches directly |
+| `/model` | pick any model on any account (every ChatGPT-plan model Codex offers, every Claude model), with each account's status and when a limited plan comes back; `/model claude-sonnet-5-5` switches directly. Your pick is saved as that account's default. |
 | `/status` | session id, token usage and cost, switches so far, files modified |
 | `/compact` | preview what compaction would do for the current model |
 | `/clear` | clear the screen (the session keeps its history) |

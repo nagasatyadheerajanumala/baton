@@ -18,6 +18,8 @@ export function cliError(message: string, provider: string): Error {
     const rel = /in (\d+) (second|minute|hour|day)s?/i.exec(m); // "try again in 2 hours"
     if (epoch) retryAfterSec = Math.max(0, Number(epoch[1]) - Date.now() / 1000);
     else if (rel) retryAfterSec = Number(rel[1]) * { second: 1, minute: 60, hour: 3_600, day: 86_400 }[rel[2]!.toLowerCase() as 'second']!;
+  } else if (/model\b[^.]{0,80}(not found|not available|isn't available|is not supported|does not exist|invalid)|unknown model|no access to model/i.test(m)) {
+    status = 404; // lets the router mark just this model unavailable and fail over
   } else if (/overloaded|529|503|temporarily unavailable/i.test(m)) {
     status = 529;
   } else if (/rate limit/i.test(m)) {

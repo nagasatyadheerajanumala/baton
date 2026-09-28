@@ -76,6 +76,7 @@ describe('subscription CLI errors', () => {
     ['Failed to authenticate: OAuth session expired and could not be refreshed', 'auth'],
     ['codex is not installed', 'fatal'],
     ['API Error: 529 Overloaded', 'overloaded'],
+    ['The model claude-fable-5-1 is not available on your plan', 'model_not_found'],
   ])('%s -> %s', (msg, kind) => {
     expect(classifyError(cliError(msg, 'X')).kind).toBe(kind);
   });

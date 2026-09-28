@@ -233,20 +233,21 @@ describe('inline UI pieces', () => {
     expect(lines.every((l) => width(l) === 100)).toBe(true);
   });
 
-  it('model picker shows account and when a limited model comes back', async () => {
-    const { renderPicker } = await import('../src/ui/tui/panels.js');
+  it('model picker lists every model under its account, with status and what is in use', async () => {
+    const { renderModelPicker, pickerItems } = await import('../src/ui/tui/panels.js');
     const now = new Date('2026-09-28T15:00:00').getTime();
-    const text = renderPicker(
-      [
-        { model: 'gpt-6-astra', label: 'ChatGPT plan', state: 'cooldown', cooldownMs: 42 * 60_000 },
-        { model: 'claude-opus-5-5', label: 'Claude plan', state: 'active', cooldownMs: 0 },
-      ],
-      1,
-      100,
-      now,
-    ).map(strip).join('\n');
-    expect(text).toMatch(/gpt-6-astra\s+ChatGPT plan\s+limit reached · retry after 3:42/);
-    expect(text).toMatch(/❯ ● claude-opus-5-5\s+Claude plan\s+in use/);
+    const accounts = [
+      { targetIndex: 0, label: 'ChatGPT plan', model: 'gpt-6-astra', current: false, state: 'cooldown' as const, cooldownMs: 42 * 60_000, models: [{ id: 'gpt-6-astra', description: 'frontier' }, { id: 'gpt-6-sol', description: 'workhorse' }, { id: 'gpt-6-luna', description: 'fast' }] },
+      { targetIndex: 1, label: 'Claude plan', model: 'claude-opus-5-5', current: true, state: 'active' as const, cooldownMs: 0, models: [{ id: 'claude-fable-5-1', description: 'deepest' }, { id: 'claude-opus-5-5', description: 'long-running' }, { id: 'claude-sonnet-5-5', description: 'fast' }] },
+    ];
+    expect(pickerItems(accounts)).toHaveLength(6);
+    const text = renderModelPicker(accounts, 5, 110, now).map(strip).join('\n');
+    expect(text).toMatch(/ChatGPT plan\s+limit reached · back after 3:42/);
+    expect(text).toMatch(/gpt-6-astra\s+frontier\s+default/);
+    expect(text).toMatch(/gpt-6-luna/);
+    expect(text).toMatch(/Claude plan\s+in use/);
+    expect(text).toMatch(/● claude-opus-5-5\s+long-running\s+in use/);
+    expect(text).toMatch(/❯\s+claude-sonnet-5-5/);
   });
 
   it('footer says in words what the budget and mode are', async () => {

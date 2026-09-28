@@ -1,4 +1,5 @@
 import type { AssistantTurn } from '../ir/types.js';
+import type { ModelInfo } from '../config/models.js';
 import type { Price } from '../pricing.js';
 import type { CompletionRequest, ProviderAdapter } from '../providers/types.js';
 import { type Classified, classifyError } from './errors.js';
@@ -11,6 +12,8 @@ export interface Target {
   maxOutputTokens: number;
   /** USD per 1M tokens; falls back to the built-in table in pricing.ts. */
   pricing?: Price;
+  /** Every model this account can run (for the /model picker). */
+  models?: ModelInfo[];
 }
 
 export const targetLabel = (t: Target) => `${t.provider}/${t.model}`;
@@ -86,6 +89,18 @@ export class Router {
 
   get current(): Target {
     return this.chain[this.currentIndex]!;
+  }
+
+  /** Switch the model an account uses (and make that account current). */
+  setModel(index: number, model: string): Target {
+    const t = this.chain[index];
+    if (!t) throw new Error(`No chain entry ${index}`);
+    const info = t.models?.find((m) => m.id === model);
+    t.model = model;
+    if (info) t.contextWindow = info.contextWindow;
+    this.currentIndex = index;
+    this.cooldownUntil.delete(targetLabel(t)); // explicit choice overrides cooldown
+    return t;
   }
 
   adapter(t: Target): ProviderAdapter {

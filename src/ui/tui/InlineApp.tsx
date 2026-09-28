@@ -9,13 +9,16 @@ import { accountLabel, pricingOverrides, runCommand, targetState } from '../comm
 import { glyph, t } from '../theme.js';
 import { type EditorState, editKey, emptyEditor } from './editor.js';
 import { renderEntry, welcomeLines, wrap } from './format.js';
-import { approvalOptions, renderApproval, renderFooter, renderInputBox, renderPicker, renderProcBox, renderQueue, renderWorking } from './panels.js';
+import { type PickerAccount, approvalOptions, pickerItems, renderApproval, renderFooter, renderInputBox, renderModelPicker, renderProcBox, renderQueue, renderWorking } from './panels.js';
+import { saveModelChoice } from '../../config/config.js';
 import type { Entry, TuiStore } from './store.js';
 
 export interface InlineAppProps {
   agent: Agent;
   store: TuiStore;
   version: string;
+  /** Config file to save model choices into (absent when running from env vars). */
+  configFile?: string;
   onExit: () => void;
 }
 
@@ -33,7 +36,7 @@ const tildify = (p: string) => {
  * in progress, a working line, queued messages, the prompt or a dialog, and
  * a footer.
  */
-export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
+export function InlineApp({ agent, store, version, configFile, onExit }: InlineAppProps) {
   const { exit } = useApp();
   const { columns: cols, rows } = useWindowSize();
   useSyncExternalStore(
@@ -79,10 +82,25 @@ export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
     doExit();
   }, [agent.processes, exitArmed, store, doExit]);
 
+  const accounts = useCallback(
+    (): PickerAccount[] =>
+      router.chain.map((tg, i) => ({
+        targetIndex: i,
+        label: accountLabel(router, tg),
+        model: tg.model,
+        current: tg === router.current,
+        ...targetState(router, tg),
+        models: (tg.models ?? [{ id: tg.model, description: '', contextWindow: tg.contextWindow }]).map((m) => ({ id: m.id, description: m.description })),
+      })),
+    [router],
+  );
+
   const openPicker = useCallback(() => {
-    store.picker = { open: true, index: Math.max(0, router.chain.indexOf(router.current)) };
+    const items = pickerItems(accounts());
+    const at = items.findIndex((it) => it.targetIndex === router.chain.indexOf(router.current) && it.model === router.current.model);
+    store.picker = { open: true, index: Math.max(0, at) };
     store.changed();
-  }, [router, store]);
+  }, [accounts, router, store]);
 
   const submit = useCallback(
     (text: string) => {
@@ -93,7 +111,7 @@ export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
         return store.clear();
       }
       if (text.startsWith('/')) {
-        const r = runCommand(text, agent);
+        const r = runCommand(text, agent, { configFile });
         if (r.exit) return requestExit();
         store.push({ kind: 'command', text });
         if (r.output) store.push({ kind: 'output', text: r.output });
@@ -122,7 +140,7 @@ export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
           if (controller.current === ac) controller.current = null;
         });
     },
-    [agent, openPicker, requestExit, store],
+    [agent, openPicker, requestExit, store, configFile],
   );
 
   // Send queued follow-ups once the current turn is done.
@@ -170,16 +188,23 @@ export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
 
     // Model picker
     if (store.picker.open) {
-      const n = router.chain.length;
+      const items = pickerItems(accounts());
+      const n = items.length;
       const pick = (i: number) => {
-        const target = router.setCurrent(String(i));
+        const it = items[i];
+        if (!it) return;
+        const target = router.setModel(it.targetIndex, it.model);
         store.picker.open = false;
-        store.push({ kind: 'notice', level: 'info', text: `Now using ${target.model} (${accountLabel(router, target)}). The conversation carries over.` });
+        const saved = configFile ? saveModelChoice(configFile, target.provider, target.model) : false;
+        store.push({
+          kind: 'notice',
+          level: 'info',
+          text: `Now using ${target.model} on ${accountLabel(router, target)}.${saved ? ` Saved as the default for ${accountLabel(router, target)}.` : ''} The conversation carries over.`,
+        });
       };
       if (key.upArrow) store.picker.index = (store.picker.index + n - 1) % n;
       else if (key.downArrow) store.picker.index = (store.picker.index + 1) % n;
       else if (key.return) return pick(store.picker.index);
-      else if (/^[1-9]$/.test(input) && Number(input) <= n) return pick(Number(input) - 1);
       else if (key.escape || (key.ctrl && input === 'c')) store.picker.open = false;
       return store.changed();
     }
@@ -266,8 +291,7 @@ export function InlineApp({ agent, store, version, onExit }: InlineAppProps) {
   if (store.approval) {
     panel = renderApproval({ ...store.approval, choice: store.approvalChoice, cwd: agent.session.cwd, cwdLabel: tildify(agent.session.cwd), mode: store.approvalMode }, w - 1);
   } else if (store.picker.open) {
-    const rowsInfo = router.chain.map((tg) => ({ model: tg.model, label: accountLabel(router, tg), ...targetState(router, tg) }));
-    panel = renderPicker(rowsInfo, store.picker.index, w - 1, now);
+    panel = renderModelPicker(accounts(), store.picker.index, w - 1, now);
   } else if (procs.open) {
     panel = renderProcBox(agent.processes, { width: w - 1, height: Math.min(16, Math.max(8, rows - 10)), selectedId: procs.selectedId, now, spinner });
   } else {

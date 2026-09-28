@@ -133,22 +133,36 @@ export function renderApproval(v: ApprovalView, w: number): string[] {
 
 // ---- Model picker ----------------------------------------------------------------
 
-export interface PickerRow {
-  model: string;
+export interface PickerAccount {
+  targetIndex: number;
   label: string;
+  /** The model this account uses now. */
+  model: string;
+  current: boolean;
   state: 'active' | 'ready' | 'cooldown' | 'disabled' | 'no-key';
   cooldownMs: number;
+  models: { id: string; description: string }[];
 }
 
-export function pickerStatus(r: PickerRow, now: number): string {
-  switch (r.state) {
+export interface PickerItem {
+  targetIndex: number;
+  model: string;
+}
+
+/** Selectable rows, in display order. */
+export function pickerItems(accounts: PickerAccount[]): PickerItem[] {
+  return accounts.flatMap((a) => a.models.map((m) => ({ targetIndex: a.targetIndex, model: m.id })));
+}
+
+export function accountStatus(a: Pick<PickerAccount, 'state' | 'cooldownMs'>, now: number): string {
+  switch (a.state) {
     case 'active':
       return t.success('in use');
     case 'ready':
       return t.muted('ready');
     case 'cooldown': {
-      const at = new Date(now + r.cooldownMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      return t.warning(`limit reached · retry after ${at}`);
+      const at = new Date(now + a.cooldownMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return t.warning(`limit reached · back after ${at}`);
     }
     case 'no-key':
       return t.danger('no API key (run baton doctor)');
@@ -157,17 +171,25 @@ export function pickerStatus(r: PickerRow, now: number): string {
   }
 }
 
-export function renderPicker(rows: PickerRow[], index: number, w: number, now: number): string[] {
-  const mw = Math.max(...rows.map((r) => r.model.length), 5) + 2;
-  const lw = Math.max(...rows.map((r) => r.label.length), 5) + 2;
-  const body = rows.map((r, i) => {
-    const sel = i === index;
-    const dot = r.state === 'active' ? t.success(glyph.active) : t.muted(glyph.idle);
-    const line = `${dot} ${r.model.padEnd(mw)}${t.muted(r.label.padEnd(lw))}${pickerStatus(r, now)}`;
-    return `${sel ? t.accent('❯') : ' '} ${sel ? t.bold(line) : line}`;
+export function renderModelPicker(accounts: PickerAccount[], cursor: number, w: number, now: number): string[] {
+  const items = pickerItems(accounts);
+  const selected = items[cursor];
+  const idw = Math.max(8, ...accounts.flatMap((a) => a.models.map((m) => m.id.length))) + 2;
+  const body: string[] = [];
+  accounts.forEach((a, ai) => {
+    if (ai > 0) body.push('');
+    body.push(`${t.bold(a.label)}  ${accountStatus(a, now)}${t.muted(`  · failover #${ai + 1}`)}`);
+    for (const m of a.models) {
+      const isSel = selected?.targetIndex === a.targetIndex && selected.model === m.id;
+      const isUsed = m.id === a.model;
+      const dot = isUsed && a.current ? t.success(glyph.active) : isUsed ? t.text(glyph.idle) : ' ';
+      const tag = isUsed ? (a.current ? t.success('  in use') : t.muted('  default')) : '';
+      const line = `${dot} ${isSel ? t.bold(m.id.padEnd(idw)) : m.id.padEnd(idw)}${t.muted(m.description)}${tag}`;
+      body.push(`${isSel ? t.accent('❯') : ' '} ${line}`);
+    }
   });
-  body.push('', t.muted(`↑↓ choose ${glyph.sep} enter switch ${glyph.sep} esc cancel ${glyph.sep} the conversation carries over`));
-  return box(t.bold('Switch model'), t.muted('failover order, top first'), body, w, t.accent);
+  body.push('', t.muted(`↑↓ choose ${glyph.sep} enter switch (saved as that account's default) ${glyph.sep} esc cancel ${glyph.sep} the conversation carries over`));
+  return box(t.bold('Switch model'), t.muted('accounts in failover order'), body, w, t.accent);
 }
 
 // ---- Processes panel -------------------------------------------------------------

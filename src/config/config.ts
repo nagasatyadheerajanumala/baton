@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Price } from '../pricing.js';
+import { codexModels, modelCatalog } from './models.js';
 import type { Target } from '../router/router.js';
 
 export interface ProviderConfig {
@@ -106,14 +107,37 @@ export function configFromEnv(env: NodeJS.ProcessEnv, subs: Subscriptions = dete
   return { providers, chain };
 }
 
-export function toTargets(config: Config): Target[] {
-  return config.chain.map((t) => ({
-    provider: t.provider,
-    model: t.model,
-    contextWindow: t.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-    maxOutputTokens: t.maxOutputTokens ?? DEFAULT_MAX_OUTPUT,
-    ...(t.pricing ? { pricing: t.pricing } : {}),
-  }));
+export function toTargets(config: Config, env: NodeJS.ProcessEnv = process.env): Target[] {
+  return config.chain.map((t) => {
+    const provider = config.providers[t.provider]!;
+    const models = modelCatalog(provider, env);
+    const known = models.find((m) => m.id === t.model)?.contextWindow;
+    // Plans run through their CLI, whose window is fixed; for APIs an explicit config value wins.
+    const contextWindow = isSubscriptionType(provider.type) ? known ?? t.contextWindow : t.contextWindow ?? known;
+    return {
+      provider: t.provider,
+      model: t.model,
+      contextWindow: contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      maxOutputTokens: t.maxOutputTokens ?? DEFAULT_MAX_OUTPUT,
+      ...(t.pricing ? { pricing: t.pricing } : {}),
+      models: models.length ? models : [{ id: t.model, description: '', contextWindow: contextWindow ?? DEFAULT_CONTEXT_WINDOW }],
+    };
+  });
+}
+
+/** Remember a model choice as the account's default in the config file baton loaded. */
+export function saveModelChoice(configFile: string, provider: string, model: string): boolean {
+  try {
+    const config = JSON.parse(readFileSync(configFile, 'utf8')) as Config;
+    const entry = config.chain.find((t) => t.provider === provider);
+    if (!entry) return false;
+    entry.model = model;
+    delete entry.contextWindow; // derived from the model catalog from now on
+    writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function resolveApiKey(p: ProviderConfig, env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -215,10 +239,11 @@ export function codexDefaultModel(env: NodeJS.ProcessEnv = process.env): string 
 function addSubscriptions(providers: Config['providers'], chain: TargetConfig[], subs: Subscriptions): void {
   if (subs.codex.loggedIn) {
     providers.chatgpt = { type: 'codex' };
-    chain.push({ provider: 'chatgpt', model: subs.codex.defaultModel ?? DEFAULT_MODELS.openai.model, contextWindow: DEFAULT_MODELS.openai.contextWindow });
+    const model = subs.codex.defaultModel ?? codexModels()[0]?.id ?? DEFAULT_MODELS.openai.model;
+    chain.push({ provider: 'chatgpt', model });
   }
   if (subs.claude.loggedIn) {
     providers.claude = { type: 'claude-code' };
-    chain.push({ provider: 'claude', model: 'claude-opus-5-5', contextWindow: 1_000_000 });
+    chain.push({ provider: 'claude', model: 'claude-opus-5-5' });
   }
 }

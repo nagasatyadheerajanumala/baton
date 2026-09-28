@@ -47,6 +47,7 @@ src/
       mouse.ts     SGR mouse parsing; strips reports from stdin before Ink sees them
       run.tsx      picks the layout; mouse on/off and cleanup for fullscreen
   config/      baton.config.json > ~/.baton/config.json > env-derived chain; DEFAULT_MODELS
+    models.ts    per-account model catalog (/model picker): Codex plan models from ~/.codex/models_cache.json, Claude lineup, OpenAI API lineup
   doctor.ts    `baton doctor`: real two-step tool loop per chain entry, plain-language diagnosis
 ```
 

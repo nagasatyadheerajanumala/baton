@@ -135,7 +135,7 @@ async function main(): Promise<number> {
     const { runTui } = await import('./ui/tui/run.js');
     const store = new TuiStore(session.cwd, approval);
     const agent = new Agent(session, router, new ToolEngine(), { cwd: session.cwd, processes, approve: store.approve });
-    await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline' });
+    await runTui(agent, { store, version: VERSION, mouse: !values['no-mouse'], approval, layout: values.fullscreen ? 'fullscreen' : 'inline', configFile: existsSync(source) ? source : undefined });
     await agent.close();
     console.log(`Session saved. Resume with: baton --resume ${session.id}`);
     return 0;

@@ -2,6 +2,7 @@ import type { Agent } from '../agent/loop.js';
 import { compact, estimateTokens } from '../compaction/compact.js';
 import { touchedFiles } from '../ir/session.js';
 import { sessionCost } from '../pricing.js';
+import { saveModelChoice } from '../config/config.js';
 import { MissingKeyAdapter } from '../providers/registry.js';
 import { type Router, type Target, targetLabel } from '../router/router.js';
 
@@ -48,7 +49,23 @@ export function pricingOverrides(router: Router) {
   return Object.fromEntries(router.chain.map((t) => [t.model, t.pricing]));
 }
 
-export function runCommand(input: string, agent: Agent): CommandResult {
+/** Switch by model id (any model on any account), account label, or chain index. */
+export function switchModel(router: Router, query: string): Target {
+  const q = query.trim().toLowerCase();
+  const byModel = router.chain.findIndex((t) => t.models?.some((m) => m.id.toLowerCase() === q) || t.model.toLowerCase() === q);
+  if (byModel >= 0) {
+    const id = router.chain[byModel]!.models?.find((m) => m.id.toLowerCase() === q)?.id ?? router.chain[byModel]!.model;
+    return router.setModel(byModel, id);
+  }
+  const byLabel = router.chain.findIndex((t) => accountLabel(router, t).toLowerCase() === q || t.provider.toLowerCase() === q);
+  if (byLabel >= 0) return router.setCurrent(String(byLabel));
+  const partial = router.chain.flatMap((t, i) => (t.models ?? []).filter((m) => m.id.toLowerCase().includes(q)).map((m) => ({ i, id: m.id })));
+  if (partial.length === 1) return router.setModel(partial[0]!.i, partial[0]!.id);
+  if (partial.length > 1) throw new Error(`"${query}" matches ${partial.map((p) => p.id).join(', ')}; be more specific.`);
+  return router.setCurrent(query);
+}
+
+export function runCommand(input: string, agent: Agent, opts: { configFile?: string } = {}): CommandResult {
   const [cmd, ...rest] = input.slice(1).trim().split(/\s+/);
   const arg = rest.join(' ');
   const router = agent.router;
@@ -64,22 +81,29 @@ export function runCommand(input: string, agent: Agent): CommandResult {
     case 'model': {
       if (arg) {
         try {
-          const t = router.setCurrent(arg);
-          return { output: `Switched to ${c.bold(targetLabel(t))}. History carries over.` };
+          const t = switchModel(router, arg);
+          const saved = opts.configFile ? saveModelChoice(opts.configFile, t.provider, t.model) : false;
+          return { output: `Now using ${c.bold(t.model)} on ${accountLabel(router, t)}.${saved ? ' Saved as its default.' : ''} The conversation carries over.` };
         } catch (e) {
           return { output: c.red((e as Error).message) };
         }
       }
-      const lines = router.chain.map((t, i) => {
+      const lines: string[] = [];
+      router.chain.forEach((t, i) => {
         const { state, cooldownMs } = targetState(router, t);
-        const mark = state === 'active' ? c.green('●') : ' ';
         const note =
-          state === 'cooldown' ? c.yellow(` (cooling down ${Math.ceil(cooldownMs / 1000)}s)`)
-          : state === 'disabled' ? c.red(' (disabled: bad key or model id; run baton doctor)')
+          state === 'active' ? c.green(' (in use)')
+          : state === 'cooldown' ? c.yellow(` (limit reached, back in ${Math.ceil(cooldownMs / 60_000)} min)`)
+          : state === 'disabled' ? c.red(' (unavailable; run baton doctor)')
           : state === 'no-key' ? c.red(' (no API key)')
           : '';
-        return `${mark} ${i}  ${targetLabel(t)}  ${c.dim(`${Math.round(t.contextWindow / 1000)}k ctx`)}${note}`;
+        lines.push(`${c.bold(accountLabel(router, t))}${note}`);
+        for (const m of t.models ?? [{ id: t.model, description: '' }]) {
+          lines.push(`  ${m.id === t.model ? c.green('●') : ' '} ${m.id.padEnd(20)} ${c.dim(m.description)}`);
+        }
+        if (i < router.chain.length - 1) lines.push('');
       });
+      lines.push('', c.dim('Switch with /model <name>, e.g. /model claude-sonnet-5-5'));
       return { output: lines.join('\n') };
     }
     case 'status': {
