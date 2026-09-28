@@ -9,17 +9,17 @@ baton talks to model providers through their **APIs**, using API keys. You need 
 Requires Node.js 20 or newer (`node --version`).
 
 ```bash
-npm install -g github:nagasatyadheerajanumala/baton
-```
-
-Or from a clone:
-
-```bash
 git clone https://github.com/nagasatyadheerajanumala/baton.git
 cd baton
 npm install        # also builds
 npm link           # puts `baton` on your PATH
 ```
+
+To update later: `git pull && npm install` in that directory.
+
+To try it without installing: `npx github:nagasatyadheerajanumala/baton doctor`.
+
+(`npm install -g github:…` does **not** work: npm skips build dependencies for global installs from git URLs.)
 
 ## 2. Get API keys
 

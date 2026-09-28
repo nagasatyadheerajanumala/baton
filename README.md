@@ -28,7 +28,8 @@ Supported providers: OpenAI, Anthropic, and anything OpenAI-compatible (OpenRout
 Requires Node 20+ and an **API key** from at least one provider. ChatGPT Plus/Pro and Claude Pro/Max subscriptions don't include API access; see the [setup guide](docs/SETUP.md) for getting keys and credits.
 
 ```bash
-npm install -g github:nagasatyadheerajanumala/baton
+git clone https://github.com/nagasatyadheerajanumala/baton.git
+cd baton && npm install && npm link   # npm install also builds; npm link puts `baton` on your PATH
 export OPENAI_API_KEY=sk-...          # any combination of keys works
 export ANTHROPIC_API_KEY=sk-ant-...
 baton doctor                          # verifies each model with a real tool call
